@@ -76,8 +76,9 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     const sides = endSides(model.direction, s, byId, mirrored);
     attach(pts, false, layout, byId.get(s.source), sides.source);
     attach(pts, true, layout, byId.get(s.target), sides.target);
-    if (byId.get(s.source)?.type === 'tee') bendAtTee(pts, false);
-    if (byId.get(s.target)?.type === 'tee') bendAtTee(pts, true);
+    const others = [...layout.nodes].filter(([id]) => id !== s.source && id !== s.target).map(([, n]) => n);
+    if (byId.get(s.source)?.type === 'tee') bendAtTee(pts, false, others);
+    if (byId.get(s.target)?.type === 'tee') bendAtTee(pts, true, others);
     return [{ s, edge, pts, d: polyline(dedupe(pts)) }];
   });
   const hopped = hopPaths(
@@ -376,18 +377,32 @@ function attach(pts: Point[], atEnd: boolean, layout: PidLayout, eq: Equipment |
  * `atEnd`) back to the tee, so lines split and join at the dot. Only an orthogonal run of at
  * least four points is moved, keeping every segment straight.
  */
-function bendAtTee(pts: Point[], atEnd: boolean): void {
+function bendAtTee(pts: Point[], atEnd: boolean, others: readonly Box[]): void {
   if (pts.length < 4) return;
   const at = (k: number) => pts[atEnd ? pts.length - 1 - k : k]!;
   const [tee, b, c, d] = [at(0), at(1), at(2), at(3)];
   const near = (p: number, q: number) => Math.abs(p - q) < 0.5;
+  // The moved run lies in the tee's own column, where other nodes may sit: only move it there
+  // when it passes none of them.
+  const clear = (from: Point, to: Point) => !others.some((n) => crosses(from, to, n));
   if (near(tee.y, b.y) && near(b.x, c.x) && near(c.y, d.y)) {
+    if (!clear(tee, { x: tee.x, y: c.y }) || !clear({ x: tee.x, y: c.y }, c)) return;
     b.x = tee.x;
     c.x = tee.x;
   } else if (near(tee.x, b.x) && near(b.y, c.y) && near(c.x, d.x)) {
+    if (!clear(tee, { x: c.x, y: tee.y }) || !clear({ x: c.x, y: tee.y }, c)) return;
     b.y = tee.y;
     c.y = tee.y;
   }
+}
+
+type Box = { x: number; y: number; width: number; height: number };
+
+/** Does the straight segment `a`–`b` pass through node box `n` (centre x/y)? */
+function crosses(a: Point, b: Point, n: Box): boolean {
+  const [x0, x1] = [Math.min(a.x, b.x), Math.max(a.x, b.x)];
+  const [y0, y1] = [Math.min(a.y, b.y), Math.max(a.y, b.y)];
+  return x0 < n.x + n.width / 2 && x1 > n.x - n.width / 2 && y0 < n.y + n.height / 2 && y1 > n.y - n.height / 2;
 }
 
 /**

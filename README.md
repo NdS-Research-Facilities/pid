@@ -33,6 +33,16 @@ pid LR
   TT-101 -.-> TIC-101 -.-> TV-101
 ```
 
+## Everything at once
+
+[`examples/all-capabilities.mmd`](examples/all-capabilities.mmd) is a small process plant that
+uses every statement, equipment type, valve kind, 3-way bore, instrument location, state style
+and line kind. [`examples/all-capabilities.card.yaml`](examples/all-capabilities.card.yaml) is
+the same plant as a Home Assistant card: every value from an entity template, plus every card
+option (actions, icon packs, image base, theme).
+
+![Every capability](docs/images/all-capabilities.png)
+
 ## Syntax
 
 | Statement | Meaning |

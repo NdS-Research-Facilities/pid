@@ -1,0 +1,128 @@
+pid LR
+  title Every capability: a small process plant
+  %% Comments start with %%. This file uses every statement, equipment type, valve kind,
+  %% instrument location, state style and line kind. Values are static here; the Home
+  %% Assistant version (all-capabilities.card.yaml) fills them in from entities.
+
+  %% ── Feed and pumping ────────────────────────────────────────────────────────
+  F-1: feed "Raw water"
+  V-01: valve gate "Inlet" = open
+  P-101: pump "Feed pump" = on
+  P-102: pump "Standby pump" = off
+  V-05: valve check "Non-return"
+  J-1: tee
+  J-2: tee
+
+  %% ── Control valve with bypass (a closed bypass dashes its lines) ────────────
+  FV-101: valve globe "Feed control" = 55%
+  V-02: valve ball "Bypass" = closed
+  V-07: valve globe "Trim" = opening
+
+  %% ── Heating: an image in place of the symbol, a heat exchanger ─────────────
+  HP-1: block "Heat pump" = on
+  E-101: exchanger "Preheater"
+  J-3: tee
+  J-4: tee
+
+  %% ── Reaction and separation ───────────────────────────────────────────────
+  R-101: reactor "Reactor" = batch 42
+  C-101: column "Stripper"
+  V-201: vessel "Knock-out"
+  K-101: compressor "Overheads" = running
+  D-101: drum "Reflux drum"
+  V-06: valve plug "Drum drain" = closed
+  V-08: valve butterfly "Vent" = unavailable
+
+  %% ── Bottoms: tank, relief, 3-way valves (plain, L-port, T-port) ───────────
+  V-04: valve butterfly "Bottoms" = 70%
+  T-101: tank "Bottoms tank"
+  PSV-101: valve relief "Relief" = closed
+  V3-101: valve3 T "Mixer" = AB
+  V3-102: valve3 L "Diverter" = AC
+  V3-103: valve3 "Selector" = BC
+  BL-1: block "Filter #40;spare#41;"
+
+  %% ── Products ────────────────────────────────────────────────────────────
+  D-1: product "Product A"
+  D-2: product "Product B"
+  D-3: product "Overheads"
+  D-4: product "Flare"
+  D-5: product "Drain"
+  D-6: product "Vent"
+  D-7: product "Recycle"
+
+  %% ── Instruments: all five ISA-5.1 locations, values, an unavailable one ────
+  TT-101: instrument "Preheat temp" = 85.2 °C
+  TIC-101: instrument dcs "Temp control" = SP 85 °C
+  LT-102: instrument "Tank level" = 73 %
+  LIC-102: instrument panel "Level control" = SP 70 %
+  PT-103: instrument "Drum pressure" = 4.8 bar
+  FT-104: instrument "Product flow" = 12.5 m³/h
+  FQI-104: instrument computer "Flow total" = 1284 m³
+  PSH-105: instrument plc "High pressure trip" = unavailable
+  AT-106: instrument "pH #40;outlet#41;" = 7.2 pH
+  TT-107: instrument "Outdoor" = -4.5 °C
+
+  %% ── Process lines: tags, a chain, ports, tees ──────────────────────────────
+  F-1 -->|1| V-01 --> P-101 -->|2| V-05 --> J-1
+  P-102 --> J-1
+  J-1 --> FV-101 --> J-2
+  J-1 --> V-02 --> J-2
+  J-2 --> E-101 -->|3| J-3 --> R-101 -->|4| C-101
+  HP-1 --> E-101
+  C-101 -->|5| V-201 --> K-101 -->|6| D-101
+  D-101 --> J-4 --> V3-101.A
+  V3-101.B --> D-3
+  V3-101.C --> V-07 --> D-7
+  J-4 --> V-06 --> D-5
+  J-4 --> V-08 --> D-6
+  C-101 -->|7| V-04 --> T-101
+  T-101 --> PSV-101 --> D-4
+  T-101 --> V3-102.A
+  V3-102.B --> BL-1 --> D-1
+  V3-102.C --> V3-103.A
+  V3-103.B --> D-2
+  V3-103.C --> D-7
+
+  %% ── Instrument connections (thin) and signals (dashed, with or without arrow) ─
+  J-3 --- TT-101
+  T-101 --- LT-102
+  D-101 --- PT-103
+  D-101 --- PSH-105
+  BL-1 --- FT-104
+  R-101 --- AT-106
+  TT-101 -.-> TIC-101 -.-> FV-101
+  LT-102 -.-> LIC-102 -.-> V-04
+  FT-104 -.- FQI-104
+  TT-107 -.-> HP-1
+
+  %% ── Stream property tables, line numbers, line styles ──────────────────────
+  stream 1 { T: 15 °C, F: 1200 kg/h }
+  stream 3 { T: 85 °C; P: 3.2 bar }
+  pipe 1 4"-W-101-A1
+  pipe 2 3"-W-102-A1
+  pipe J-1>V-02 2"-W-103-A1
+  pipe 4 3"-P-104-B2
+  %% Lines count from 0 in written order: 13 is HP-1 --> E-101, 0-1 the raw water inlet
+  linkStyle 13 stroke:#c62828,stroke-width:2.5px
+  linkStyle 0,1 stroke:#1565c0
+  linkStyle default stroke-linecap:round
+
+  %% ── Colours, an icon, an image ───────────────────────────────────────────
+  classDef hot fill:#ffebee,stroke:#c62828,color:#b71c1c
+  classDef cold fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+  classDef alarm fill:#ffcdd2,stroke:#d50000,stroke-width:3px,color:#d50000,font-weight:bold
+  classDef running fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+  class TT-101,TIC-101 hot
+  class TT-107 cold
+  class PT-103 alarm
+  class P-101,K-101 running
+  style R-101 fill:#fff8e1,stroke:#ff8f00
+  image HP-1 assets/heat-pump.png 64
+  icon PT-103 mdi:gauge 40
+  icon TT-107 mdi:snowflake-thermometer 40
+  icon AT-106 mdi:flask-outline 40
+
+  %% ── Live state on its own lines (what Home Assistant templates fill in) ────
+  R-101 = batch 42
+  E-101 = 85 °C out

@@ -195,6 +195,24 @@ describe('line styles and numbers', () => {
   });
 });
 
+describe('all-capabilities example', () => {
+  it('parses cleanly and uses every equipment type, valve kind, bore and instrument location', async () => {
+    const { EQUIPMENT_TYPES, INSTRUMENT_LOCATIONS, VALVE_KINDS } = await import('../src/model.js');
+    const { model, diagnostics } = parsePid(read('all-capabilities.mmd'));
+    expect(diagnostics).toEqual([]);
+    const eq = model.equipment;
+    expect(new Set(eq.map((e) => e.type))).toEqual(new Set(EQUIPMENT_TYPES));
+    expect(new Set(eq.flatMap((e) => (e.type === 'valve' ? [e.valveKind ?? 'gate'] : [])))).toEqual(new Set(VALVE_KINDS));
+    expect(new Set(eq.flatMap((e) => (e.type === 'instrument' ? [e.location ?? 'field'] : [])))).toEqual(new Set(INSTRUMENT_LOCATIONS));
+    expect(new Set(eq.flatMap((e) => (e.type === 'valve3' ? [e.bore ?? 'none'] : [])))).toEqual(new Set(['L', 'T', 'none']));
+    expect(new Set(model.streams.map((s) => `${s.kind}${s.arrow ? '>' : ''}`))).toEqual(new Set(['process>', 'connection', 'signal>', 'signal']));
+    expect(eq.some((e) => e.image) && eq.some((e) => e.icon) && eq.some((e) => e.classes) && eq.some((e) => e.style)).toBe(true);
+    expect(model.streams.some((s) => s.lineNumber) && model.streams.some((s) => s.style) && model.linkStyleDefault).toBeTruthy();
+    expect(model.streams[13]).toMatchObject({ source: 'HP-1', target: 'E-101' });
+    expect(eq.find((e) => e.id === 'AT-106')?.name).toBe('pH (outlet)');
+  });
+});
+
 describe('Mermaid v13 integration', () => {
   it('detects and renders a pid to SVG', async () => {
     const mermaid = createMermaid();

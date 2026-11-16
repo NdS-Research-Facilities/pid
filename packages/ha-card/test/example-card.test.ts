@@ -1,0 +1,89 @@
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { parse } from 'yaml';
+import { describe, expect, it, vi } from 'vitest';
+import '../src/pid-card.js';
+import type { PidCard } from '../src/pid-card.js';
+import type { HassEntity, HomeAssistant } from '../src/types.js';
+import { extractReferencedEntities } from '../src/vendor/template-renderer.js';
+
+const file = `${import.meta.dirname}/../../../examples/all-capabilities.card.yaml`;
+
+/** Plausible states for the example's entities. */
+const VALUES: Record<string, [string, Record<string, unknown>?]> = {
+  'valve.inlet': ['open'],
+  'switch.feed_pump': ['on'],
+  'switch.standby_pump': ['off'],
+  'valve.feed_control': ['open', { current_position: 55 }],
+  'valve.bypass': ['closed'],
+  'valve.trim': ['opening'],
+  'climate.heat_pump': ['heat'],
+  'sensor.preheater_outlet_temp': ['85.3'],
+  'sensor.reactor_batch': ['42'],
+  'switch.compressor': ['on'],
+  'valve.drum_drain': ['closed'],
+  'valve.vent': ['unavailable'],
+  'valve.bottoms': ['open', { current_position: 70 }],
+  'binary_sensor.relief_lifted': ['off'],
+  'select.mixer_ports': ['AB'],
+  'select.diverter_ports': ['AC'],
+  'select.selector_ports': ['BC'],
+  'sensor.preheat_temp': ['85.24'],
+  'climate.preheat': ['heat', { temperature: 85 }],
+  'sensor.tank_level': ['73.4'],
+  'number.tank_level_setpoint': ['70'],
+  'sensor.drum_pressure': ['4.83'],
+  'sensor.product_flow': ['12.46'],
+  'sensor.product_total': ['1284.2'],
+  'binary_sensor.high_pressure_trip': ['unavailable'],
+  'sensor.outlet_ph': ['7.21'],
+  'sensor.outdoor_temp': ['-4.5'],
+  'sensor.raw_water_temp': ['15.04'],
+  'sensor.raw_water_flow': ['1200.4'],
+  'sensor.preheater_pressure': ['3.2'],
+  'sun.sun': ['above_horizon'],
+};
+
+describe('examples/all-capabilities.card.yaml', () => {
+  it('is a valid card config whose every entity the test knows', () => {
+    const config = parse(readFileSync(file, 'utf8'));
+    expect(config.type).toBe('custom:pid-card');
+    const used = extractReferencedEntities(config.content);
+    expect(used.filter((e: string) => !(e in VALUES))).toEqual([]);
+  });
+
+  it('renders live values, alarm colours and clickable equipment without errors', async () => {
+    const mdi = readFileSync(createRequire(import.meta.url).resolve('@iconify-json/mdi/icons.json'), 'utf8');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(mdi, { status: 200 })));
+    try {
+      const config = parse(readFileSync(file, 'utf8'));
+      const card = document.createElement('pid-card') as PidCard;
+      document.body.appendChild(card);
+      card.setConfig(config);
+      const states = Object.fromEntries(
+        Object.entries(VALUES).map(([id, [state, attributes]]): [string, HassEntity] => [
+          id,
+          { entity_id: id, state, attributes: attributes ?? {}, last_changed: '', last_updated: '' },
+        ]),
+      );
+      const hass: HomeAssistant = { states, themes: { darkMode: false, theme: 'default' }, language: 'en', callService: () => {} };
+      const done = new Promise((r) => card.addEventListener('pid-card-rendered', r, { once: true }));
+      card.hass = hass;
+      await done;
+      const root = card.shadowRoot!;
+      const error = root.querySelector<HTMLElement>('.error')!;
+      expect(error.hidden, error.textContent ?? '').toBe(true);
+      const svg = root.querySelector('.diagram')!.innerHTML;
+      for (const text of ['85.2 °C', '4.8 bar', '12.5 m³/h', '1284 m³', '7.2 pH', '-4.5 °C', 'SP 85 °C', '55 % open', 'batch 42', 'T: 15.0 °C', 'A–B', 'running'])
+        expect(svg, text).toContain(text);
+      expect(svg).toContain('class-alarm');
+      expect(svg).toContain('href="/local/assets/heat-pump.png"');
+      expect(svg.match(/class="custom-icon"/g)).toHaveLength(3);
+      const clickable = [...root.querySelectorAll('.clickable')].map((el) => el.getAttribute('data-id'));
+      expect(clickable).toEqual(expect.arrayContaining(['node-P-101', 'node-T-101', 'node-C-101', 'node-TT-101', 'node-PT-103']));
+      expect(clickable).not.toContain('node-TT-107');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

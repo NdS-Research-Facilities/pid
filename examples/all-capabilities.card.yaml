@@ -1,0 +1,198 @@
+# Home Assistant dashboard card using every capability of pid-card.
+#
+# Paste into a dashboard (Edit dashboard → ⋮ → Raw configuration editor, or a Manual card) and
+# replace the entity ids with your own. The diagram is examples/all-capabilities.mmd with every
+# static value replaced by a template; see the README for the template functions.
+#
+# The heat-pump image loads from config/www/assets/heat-pump.png (copy it from examples/assets/).
+
+type: custom:pid-card
+title: Process plant
+theme: auto                 # auto follows the HA theme; or default, dark, forest, neutral, base
+card_size: 12
+numeric_fallback: 0         # used when a template needs a number but the state is not one
+image_base: /local/         # relative image paths load from config/www
+auto_more_info: true        # clicking equipment whose state reads one entity opens it
+entities:                   # extra entities to watch (those in templates are found automatically)
+  - sun.sun
+icon_packs:                 # mdi is preset; add or override packs (URL of an Iconify JSON)
+  mdi: https://cdn.jsdelivr.net/npm/@iconify-json/mdi@1/icons.json
+actions:
+  T-101: sensor.tank_level                  # shorthand: more-info of this entity
+  P-101:
+    action: toggle
+    entity: switch.feed_pump
+    confirmation:
+      text: Toggle the feed pump?
+  HP-1:
+    action: more-info
+    entity: climate.heat_pump
+  C-101:
+    action: navigate
+    navigation_path: /lovelace/stripper
+  BL-1:
+    action: url
+    url_path: https://example.com/filter-manual.pdf
+  V-02:
+    action: perform-action
+    perform_action: valve.open_valve
+    target:
+      entity_id: valve.bypass
+  TT-107:
+    action: none                            # not clickable, even though it reads one entity
+content: |
+  pid LR
+    title Every capability: a small process plant
+
+    %% ── Feed and pumping ────────────────────────────────────────────────────────
+    F-1: feed "Raw water"
+    V-01: valve gate "Inlet"
+    P-101: pump "Feed pump"
+    P-102: pump "Standby pump"
+    V-05: valve check "Non-return"
+    J-1: tee
+    J-2: tee
+
+    %% ── Control valve with bypass (a closed bypass dashes its lines) ────────────
+    FV-101: valve globe "Feed control"
+    V-02: valve ball "Bypass"
+    V-07: valve globe "Trim"
+
+    %% ── Heating: an image in place of the symbol, a heat exchanger ─────────────
+    HP-1: block "Heat pump"
+    E-101: exchanger "Preheater"
+    J-3: tee
+    J-4: tee
+
+    %% ── Reaction and separation ───────────────────────────────────────────────
+    R-101: reactor "Reactor"
+    C-101: column "Stripper"
+    V-201: vessel "Knock-out"
+    K-101: compressor "Overheads"
+    D-101: drum "Reflux drum"
+    V-06: valve plug "Drum drain"
+    V-08: valve butterfly "Vent"
+
+    %% ── Bottoms: tank, relief, 3-way valves (plain, L-port, T-port) ───────────
+    V-04: valve butterfly "Bottoms"
+    T-101: tank "Bottoms tank"
+    PSV-101: valve relief "Relief"
+    V3-101: valve3 T "Mixer"
+    V3-102: valve3 L "Diverter"
+    V3-103: valve3 "Selector"
+    BL-1: block "Filter #40;spare#41;"
+
+    %% ── Products ────────────────────────────────────────────────────────────
+    D-1: product "Product A"
+    D-2: product "Product B"
+    D-3: product "Overheads"
+    D-4: product "Flare"
+    D-5: product "Drain"
+    D-6: product "Vent"
+    D-7: product "Recycle"
+
+    %% ── Instruments: all five ISA-5.1 locations, values, an unavailable one ────
+    TT-101: instrument "Preheat temp"
+    TIC-101: instrument dcs "Temp control"
+    LT-102: instrument "Tank level"
+    LIC-102: instrument panel "Level control"
+    PT-103: instrument "Drum pressure"
+    FT-104: instrument "Product flow"
+    FQI-104: instrument computer "Flow total"
+    PSH-105: instrument plc "High pressure trip"
+    AT-106: instrument "pH #40;outlet#41;"
+    TT-107: instrument "Outdoor"
+
+    %% ── Process lines: tags, a chain, ports, tees ──────────────────────────────
+    F-1 -->|1| V-01 --> P-101 -->|2| V-05 --> J-1
+    P-102 --> J-1
+    J-1 --> FV-101 --> J-2
+    J-1 --> V-02 --> J-2
+    J-2 --> E-101 -->|3| J-3 --> R-101 -->|4| C-101
+    HP-1 --> E-101
+    C-101 -->|5| V-201 --> K-101 -->|6| D-101
+    D-101 --> J-4 --> V3-101.A
+    V3-101.B --> D-3
+    V3-101.C --> V-07 --> D-7
+    J-4 --> V-06 --> D-5
+    J-4 --> V-08 --> D-6
+    C-101 -->|7| V-04 --> T-101
+    T-101 --> PSV-101 --> D-4
+    T-101 --> V3-102.A
+    V3-102.B --> BL-1 --> D-1
+    V3-102.C --> V3-103.A
+    V3-103.B --> D-2
+    V3-103.C --> D-7
+
+    %% ── Instrument connections (thin) and signals (dashed, with or without arrow) ─
+    J-3 --- TT-101
+    T-101 --- LT-102
+    D-101 --- PT-103
+    D-101 --- PSH-105
+    BL-1 --- FT-104
+    R-101 --- AT-106
+    TT-101 -.-> TIC-101 -.-> FV-101
+    LT-102 -.-> LIC-102 -.-> V-04
+    FT-104 -.- FQI-104
+    TT-107 -.-> HP-1
+
+    %% ── Stream property tables, line numbers, line styles ──────────────────────
+    pipe 1 4"-W-101-A1
+    pipe 2 3"-W-102-A1
+    pipe J-1>V-02 2"-W-103-A1
+    pipe 4 3"-P-104-B2
+    %% Lines count from 0 in written order: 13 is HP-1 --> E-101, 0-1 the raw water inlet
+    linkStyle 13 stroke:#c62828,stroke-width:2.5px
+    linkStyle 0,1 stroke:#1565c0
+    linkStyle default stroke-linecap:round
+
+    %% ── Colours, an icon, an image ───────────────────────────────────────────
+    classDef hot fill:#ffebee,stroke:#c62828,color:#b71c1c
+    classDef cold fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+    classDef alarm fill:#ffcdd2,stroke:#d50000,stroke-width:3px,color:#d50000,font-weight:bold
+    classDef running fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    class TT-101,TIC-101 hot
+    class TT-107 cold
+    class PT-103 alarm
+    class P-101,K-101 running
+    style R-101 fill:#fff8e1,stroke:#ff8f00
+    image HP-1 assets/heat-pump.png 64
+    icon PT-103 mdi:gauge 40
+    icon TT-107 mdi:snowflake-thermometer 40
+    icon AT-106 mdi:flask-outline 40
+    %% ── Live values: every ${...} reads Home Assistant; the card re-renders on change ──
+    V-01 = ${states['valve.inlet']}
+    P-101 = ${states['switch.feed_pump']}
+    P-102 = ${states['switch.standby_pump']}
+    FV-101 = ${attr('valve.feed_control', 'current_position')}
+    V-02 = ${states['valve.bypass']}
+    V-07 = ${states['valve.trim']}
+    HP-1 = ${states['climate.heat_pump']}
+    E-101 = ${round(states['sensor.preheater_outlet_temp'], 0)} °C out
+    R-101 = batch ${states['sensor.reactor_batch']}
+    K-101 = ${if(is_state('switch.compressor', 'on'), 'running', 'stopped')}
+    V-06 = ${states['valve.drum_drain']}
+    V-08 = ${states['valve.vent']}
+    V-04 = ${attr('valve.bottoms', 'current_position')}
+    PSV-101 = ${if(is_state('binary_sensor.relief_lifted', 'on'), 'open', 'closed')}
+    V3-101 = ${states['select.mixer_ports']}
+    V3-102 = ${states['select.diverter_ports']}
+    V3-103 = ${states['select.selector_ports']}
+
+    TT-101 = ${round(states['sensor.preheat_temp'], 1)} °C
+    TIC-101 = SP ${attr('climate.preheat', 'temperature')} °C
+    LT-102 = ${round(states['sensor.tank_level'], 0)} %
+    LIC-102 = SP ${states['number.tank_level_setpoint']} %
+    PT-103 = ${fixed(states['sensor.drum_pressure'], 1)} bar
+    FT-104 = ${round(states['sensor.product_flow'], 1)} m³/h
+    FQI-104 = ${round(states['sensor.product_total'], 0)} m³
+    PSH-105 = ${states['binary_sensor.high_pressure_trip']}
+    AT-106 = ${round(states['sensor.outlet_ph'], 1)} pH
+    TT-107 = ${round(states['sensor.outdoor_temp'], 1)} °C
+
+    stream 1 { T: ${round(states['sensor.raw_water_temp'], 1)} °C, F: ${round(states['sensor.raw_water_flow'], 0)} kg/h }
+    stream 3 { T: ${round(states['sensor.preheater_outlet_temp'], 0)} °C; P: ${fixed(states['sensor.preheater_pressure'], 1)} bar }
+
+    %% ── Colours from live values: alarm above 4.5 bar ──────────────────────────
+    classDef ok fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    class PT-103 ${if(states['sensor.drum_pressure'] > 4.5, 'alarm', 'ok')}
