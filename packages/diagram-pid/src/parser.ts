@@ -80,11 +80,11 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
 
     let m: RegExpExecArray | null;
     if ((m = TITLE.exec(line))) {
-      model.title = m[1]!.trim();
+      model.title = decodeEntities(m[1]!.trim());
     } else if ((m = STREAM_PROPS.exec(line))) {
-      model.properties.set(unquote(m[1]!), parseProperties(m[2]!));
+      model.properties.set(decodeEntities(unquote(m[1]!)), parseProperties(m[2]!));
     } else if ((m = STATE.exec(line))) {
-      touch(m[1]!, start, end).state = parseState(m[2]!);
+      touch(m[1]!, start, end).state = parseState(decodeEntities(m[2]!));
     } else if (LINK.test(line)) {
       // split with two capture groups: [id, op, label, id, op, label, id, ...]
       const parts = line.split(LINK);
@@ -95,7 +95,7 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
       }
       for (let i = 0; i + 1 < ids.length; i++) {
         const [kind, arrow] = LINK_KIND[parts[3 * i + 1]!]!;
-        const label = parts[3 * i + 2]?.trim() || undefined;
+        const label = parts[3 * i + 2]?.trim() ? decodeEntities(parts[3 * i + 2]!.trim()) : undefined;
         const id = `s${model.streams.length}`;
         // Endpoints are resolved after every declaration is read: `V-1.C` is a port only when
         // `V-1` is a 3-way valve, declared before or after the stream.
@@ -116,8 +116,8 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
           error(`Unknown instrument location "${location}". Known: ${INSTRUMENT_LOCATIONS.join(', ')}`, start, end);
         else eq.location = loc as InstrumentLocation;
       }
-      if (name !== undefined) eq.name = name;
-      if (state !== undefined) eq.state = parseState(state);
+      if (name !== undefined) eq.name = decodeEntities(name);
+      if (state !== undefined) eq.state = parseState(decodeEntities(state));
     } else {
       error(`Cannot read "${line}"`, start, end);
     }
@@ -141,6 +141,18 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
   return { model, ast, diagnostics, symbols: [], statements: [] };
 }
 
+const NAMED: Record<string, string> = { quot: '"', amp: '&', lt: '<', gt: '>', nbsp: '\u00a0', apos: "'" };
+
+/**
+ * Decodes Mermaid entity codes (`#40;`, `#quot;`), which Home Assistant cards use to mask
+ * characters in entity values that would otherwise read as syntax.
+ */
+export function decodeEntities(s: string): string {
+  return s.replace(/#(\d+|[a-z]+);/gi, (m, code: string) =>
+    /^\d+$/.test(code) ? String.fromCodePoint(Number(code)) : (NAMED[code.toLowerCase()] ?? m),
+  );
+}
+
 function unquote(s: string): string {
   return s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1) : s;
 }
@@ -152,7 +164,8 @@ function parseProperties(body: string): StreamProperty[] {
     .filter(Boolean)
     .map((p) => {
       const i = p.indexOf(':');
-      return i < 0 ? { key: '', value: p } : { key: p.slice(0, i).trim(), value: p.slice(i + 1).trim() };
+      const [key, value] = i < 0 ? ['', p] : [p.slice(0, i).trim(), p.slice(i + 1).trim()];
+      return { key: decodeEntities(key), value: decodeEntities(value) };
     });
 }
 

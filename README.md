@@ -71,23 +71,51 @@ The tag is drawn inside the bubble, ISA-5.1 style: function letters over the loo
   to a port with `V-1.A`. The state lists the connected ports: `AB`, `AC`, `BC`, `ABC` or
   `closed`. Shut ports are solid, and the process lines on them are dashed.
 
-## Home Assistant
+## Home Assistant card
 
-The [ha-mermaid](https://github.com/pajew-ski/ha-mermaid) card fills in `${...}` templates
-before Mermaid sees the text, so states can come from entities:
+`custom:pid-card` (in `packages/ha-card`) is a Lovelace card built on Mermaid v13 with the P&ID
+plugin included. It renders `pid` diagrams and every other Mermaid diagram type, and re-renders
+when an entity its templates read changes.
 
 ```yaml
+type: custom:pid-card
+title: Buffer tank
 content: |
   pid LR
+    T-101: tank "Buffer"
     TT-101: instrument "Buffer temp"
     TV-101: valve "Steam valve"
-    ...
+    T-101 --- TT-101
+    TT-101 -.-> TV-101
+
     TT-101 = ${round(states['sensor.buffer_temp'], 1)} °C
     TV-101 = ${attr('valve.steam', 'current_position')}
 ```
 
-That card currently bundles Mermaid v12, which cannot load v13 plugins. Bringing this plugin to
-the dashboard is still open: either a port of the card to v13 or a separate card.
+| Option | Default | Description |
+| --- | --- | --- |
+| `content` | required | Mermaid text with `${...}` templates |
+| `title` | — | Card title |
+| `theme` | `auto` | `auto` follows the HA theme (light/dark); or `default`, `dark`, `forest`, `neutral`, `base` |
+| `entities` | — | Extra entities to watch; those in templates are found automatically |
+| `numeric_fallback` | `0` | Number used when a template needs one but the state is not numeric |
+| `card_size` | `4` | Card height in the dashboard grid |
+
+Templates use the same syntax as [ha-mermaid](https://github.com/pajew-ski/ha-mermaid), whose
+template engine is included (MIT): `${states['e']}`, `${attr('e', 'a')}`, `${round(x, 1)}`,
+`${fixed(x, 2)}`, `${calc(...)}`, `${if(cond, a, b)}`, `${is_state('e', 's')}`,
+`${timestamp('e')}` and more. Entity text is masked so it cannot break the diagram syntax; the
+P&ID parser decodes it for display.
+
+### Install
+
+**Manual:** run `pnpm build`, copy `packages/ha-card/dist/pid-card.js` to `config/www/`, and add
+`/local/pid-card.js` as a *JavaScript module* under Settings → Dashboards → Resources.
+
+**HACS:** add this repository as a custom repository of type *Dashboard*. HACS installs the
+`pid-card.js` attached to the latest GitHub release; CI attaches it when a `v*` tag is pushed.
+
+The bundle is about 2.1 MB (0.8 MB gzipped), because it carries all of Mermaid v13.
 
 ## Usage
 
@@ -116,6 +144,7 @@ Mermaid v13 is alpha; the version is pinned exactly to `13.0.0-alpha.3`.
 - In `TB`/`BT` flows, a line on a 3-way valve's `C` port can be routed from the opposite side
   and cross other lines.
 - Instruments that tap a pipe (rather than a piece of equipment) are not supported yet.
+- The card has no visual editor and no clickable nodes yet.
 
 ## References
 

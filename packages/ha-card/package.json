@@ -1,0 +1,24 @@
+{
+  "name": "@nds/pid-card",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Home Assistant Lovelace card for Mermaid v13 diagrams, with P&IDs and live entity values",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "build": "esbuild src/pid-card.ts --bundle --format=esm --target=es2022 --minify --conditions=source --legal-comments=eof --outfile=dist/pid-card.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@nds/diagram-pid": "workspace:*",
+    "mermaid": "13.0.0-alpha.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.28.2",
+    "happy-dom": "^21.0.4",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}
