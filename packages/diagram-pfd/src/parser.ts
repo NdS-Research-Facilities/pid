@@ -1,11 +1,14 @@
 import type { DiagramParseContext } from '@mermaid-js/core';
 import type { AstNode, Diagnostic, ParseResult } from '@mermaid-js/core/parser-kit';
 import type { Dir } from '@mermaid-js/core/layout';
-import { EQUIPMENT_TYPES, type Equipment, type EquipmentType, type PfdModel, type StreamProperty } from './model.js';
+import { EQUIPMENT_TYPES, type Equipment, type EquipmentType, type PfdModel, type Port, type StreamProperty } from './model.js';
+import { parseState } from './state.js';
 
 const HEADER = /^pfd(?:\s+(LR|RL|TB|TD|BT))?\s*$/;
 const TITLE = /^title\s+(.+)$/;
-const EQUIPMENT = /^([A-Za-z][\w.-]*)\s*:\s*([A-Za-z]+)(?:\s+"([^"]*)")?$/;
+const EQUIPMENT = /^([A-Za-z][\w.-]*)\s*:\s*([A-Za-z][A-Za-z0-9]*)(?:\s+"([^"]*)")?(?:\s*=\s*(.*))?$/;
+/** `TAG = value`: a state line, kept apart from the drawing so templates touch only these. */
+const STATE = /^([A-Za-z][\w.-]*)\s*=\s*(.*)$/;
 const STREAM_PROPS = /^stream\s+("[^"]*"|[^\s{]+)\s*\{(.*)\}$/;
 const ID = /^[A-Za-z][\w.-]*$/;
 /** `-->` with an optional `|label|` straight after it. */
@@ -35,6 +38,7 @@ export function parsePfd(text: string, ctx?: Pick<DiagramParseContext, 'preproce
     return eq;
   };
 
+  const ranges: { start: number; end: number }[] = [];
   let offset = ctx?.preprocessed.bodyStart ?? 0;
   let sawHeader = false;
   for (const raw of text.slice(offset).split('\n')) {
@@ -71,25 +75,40 @@ export function parsePfd(text: string, ctx?: Pick<DiagramParseContext, 'preproce
         continue;
       }
       for (let i = 0; i + 1 < ids.length; i++) {
-        const source = touch(ids[i]!, start, end).id;
-        const target = touch(ids[i + 1]!, start, end).id;
         const label = parts[2 * i + 1]?.trim() || undefined;
         const id = `s${model.streams.length}`;
-        model.streams.push({ id, source, target, label, ast: `edge-${id}` });
+        // Endpoints are resolved after every declaration is read: `V-1.C` is a port only when
+        // `V-1` is a 3-way valve, declared before or after the stream.
+        model.streams.push({ id, source: ids[i]!, target: ids[i + 1]!, label, ast: `edge-${id}` });
         children.push({ id: `edge-${id}`, type: 'stream', range: { start, end } });
+        ranges.push({ start, end });
       }
+    } else if ((m = STATE.exec(line))) {
+      touch(m[1]!, start, end).state = parseState(m[2]!);
     } else if ((m = EQUIPMENT.exec(line))) {
-      const [, id, type, name] = m;
+      const [, id, type, name, state] = m;
       const known = (EQUIPMENT_TYPES as readonly string[]).includes(type!.toLowerCase());
       if (!known) error(`Unknown equipment type "${type}". Known: ${EQUIPMENT_TYPES.join(', ')}`, start, end);
       const eq = touch(id!, start, end);
       eq.type = known ? (type!.toLowerCase() as EquipmentType) : 'block';
       if (name !== undefined) eq.name = name;
+      if (state !== undefined) eq.state = parseState(state);
     } else {
       error(`Cannot read "${line}"`, start, end);
     }
   }
   if (!sawHeader && diagnostics.length === 0) error('Expected "pfd"', 0, text.length);
+
+  model.streams.forEach((s, i) => {
+    const { start, end } = ranges[i]!;
+    const resolve = (ref: string): [string, Port | undefined] => {
+      const m = /^(.+)\.([ABC])$/.exec(ref);
+      if (m && byId.get(m[1]!)?.type === 'valve3') return [m[1]!, m[2] as Port];
+      return [touch(ref, start, end).id, undefined];
+    };
+    [s.source, s.sourcePort] = resolve(s.source);
+    [s.target, s.targetPort] = resolve(s.target);
+  });
 
   const ast: AstNode = { id: 'root', type: 'pfd', range: { start: 0, end: text.length }, children };
   return { model, ast, diagnostics, symbols: [], statements: [] };
@@ -109,3 +128,4 @@ function parseProperties(body: string): StreamProperty[] {
       return i < 0 ? { key: '', value: p } : { key: p.slice(0, i).trim(), value: p.slice(i + 1).trim() };
     });
 }
+

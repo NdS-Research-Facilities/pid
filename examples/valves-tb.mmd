@@ -1,0 +1,22 @@
+pfd TB
+  title Same plant, top to bottom, diverter on A–C
+  T-101: tank "Buffer"
+  V-101: valve "Outlet"
+  P-101: pump "Circulation"
+  V-102: valve3 "Diverter"
+  E-101: exchanger "Heater"
+  T-102: tank "Return"
+  V-103: valve "Drain"
+  D-1: product "Drain"
+
+  T-101 -->|1| V-101 --> P-101 -->|2| V-102.A
+  V-102.B -->|3| E-101 --> T-102
+  V-102.C -->|4| T-102
+  T-102 --> V-103 --> D-1
+
+  %% Live state, e.g. filled in by Home Assistant templates
+  V-101 = opening
+  P-101 = on
+  V-102 = AC
+  V-103 = closed
+  stream 1 { T: 42.5 °C }

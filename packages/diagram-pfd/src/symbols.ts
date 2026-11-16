@@ -1,15 +1,19 @@
-import type { EquipmentType } from './model.js';
+import type { EquipmentType, Port } from './model.js';
 
 export interface SymbolPart {
   tag: 'path' | 'circle' | 'rect';
   attrs: Record<string, string | number>;
   /** Filled with the node background (true) or drawn as a bare line (false). */
   fill: boolean;
+  /** The 3-way valve port this part stands for: drawn solid when that port is shut. */
+  port?: Port;
 }
 
 export interface SymbolDef {
   width: number;
   height: number;
+  /** Drawn along the flow: turned a quarter when the diagram runs vertically. */
+  turns?: boolean;
   /** Parts in local coordinates, origin at the symbol's top-left corner. */
   parts: SymbolPart[];
 }
@@ -60,7 +64,19 @@ export const SYMBOLS: Record<EquipmentType, SymbolDef> = {
     height: 56,
     parts: [{ tag: 'circle', attrs: { cx: 28, cy: 28, r: 26 }, fill: true }, line('M2 28 L12 28 L18 14 L28 42 L38 14 L44 28 L54 28')],
   },
-  valve: { width: 30, height: 20, parts: [shape('M0 0 L30 20 V0 L0 20 Z')] },
+  valve: { width: 36, height: 24, turns: true, parts: [shape('M0 0 L36 24 V0 L0 24 Z')] },
+  // Ports A (left) and B (right) on the flow axis, C (the T's stem) below; the body's centre is
+  // the symbol's centre so straight-through streams run through it.
+  valve3: {
+    width: 36,
+    height: 44,
+    turns: true,
+    parts: [
+      { ...shape('M0 10 L18 22 L0 34 Z'), port: 'A' },
+      { ...shape('M36 10 L18 22 L36 34 Z'), port: 'B' },
+      { ...shape('M18 22 L6 44 H30 Z'), port: 'C' },
+    ],
+  },
   feed: { width: 70, height: 30, parts: [shape('M0 0 H55 L70 15 L55 30 H0 Z')] },
   product: { width: 70, height: 30, parts: [shape('M0 0 H55 L70 15 L55 30 H0 Z')] },
 };

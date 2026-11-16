@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.tsbuildinfo
 out/
+.DS_Store
+._*
