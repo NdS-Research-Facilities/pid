@@ -5,6 +5,8 @@ import {
   EQUIPMENT_TYPES,
   INSTRUMENT_LOCATIONS,
   VALVE_KINDS,
+  BORES,
+  type Bore,
   type Equipment,
   type EquipmentType,
   type InstrumentLocation,
@@ -119,8 +121,12 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
         } else if (eq.type === 'valve') {
           if ((VALVE_KINDS as readonly string[]).includes(v)) eq.valveKind = v as ValveKind;
           else error(`Unknown valve kind "${variant}". Known: ${VALVE_KINDS.join(', ')}`, start, end);
+        } else if (eq.type === 'valve3') {
+          const bore = variant.toUpperCase();
+          if ((BORES as readonly string[]).includes(bore)) eq.bore = bore as Bore;
+          else error(`Unknown 3-way valve port "${variant}". Known: L, T`, start, end);
         } else {
-          error(`Only instruments (location) and valves (kind) take a variant; "${variant}" on a ${eq.type}`, start, end);
+          error(`Only instruments (location), valves (kind) and 3-way valves (L or T) take a variant; "${variant}" on a ${eq.type}`, start, end);
         }
       }
       if (name !== undefined) eq.name = decodeEntities(name);

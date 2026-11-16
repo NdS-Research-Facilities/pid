@@ -2,7 +2,7 @@ import type { RenderContext } from '@mermaid-js/core';
 import type { Dir, LayoutEdge, LayoutModel, LayoutNode, Side } from '@mermaid-js/core/layout';
 import { layoutLabel, Style, type FontKey, type MeasuredLabel } from '@mermaid-js/core/text';
 import type { Equipment, PidModel, Port, Stream } from './model.js';
-import { instrumentText, stateText } from './state.js';
+import { equipmentStateText, instrumentText } from './state.js';
 import { splitTag, symbolFor } from './symbols.js';
 
 export const LABEL_GAP = 6;
@@ -128,7 +128,7 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
     const tag = instrument ? undefined : measure(eq.id, font, Style.Bold);
     const value = instrument && eq.state ? measure(instrumentText(eq.state), font, Style.Bold) : undefined;
     const name = eq.name ? measure(eq.name, small) : undefined;
-    const state = !instrument && eq.state ? measure(stateText(eq.state), small, Style.Italic) : undefined;
+    const state = !instrument && eq.state ? measure(equipmentStateText(eq), small, Style.Italic) : undefined;
     const lines = [tag, value, name, state].filter((l): l is MeasuredLabel => l !== undefined);
     let bubble: NodeLabels['bubble'];
     if (instrument) {

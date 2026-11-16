@@ -70,9 +70,18 @@ The tag is drawn inside the bubble, ISA-5.1 style: function letters over the loo
   `unavailable`. Closed is drawn solid, open hollow, partly open shaded; moving or unknown is
   dashed. A valve that a signal line drives (`TIC-101 -.-> TV-101`) is drawn as a control valve
   with an actuator, and the signal lands on the actuator.
-- `valve3` (3-way T): ports `A` (inlet), `B` (straight through) and `C` (branch). Lines attach
-  to a port with `V-1.A`. The state lists the connected ports: `AB`, `AC`, `BC`, `ABC` or
-  `closed`. Shut ports are solid, and the process lines on them are dashed.
+- `valve3 [L|T]` (3-way): ports `A` (inlet), `B` (straight through) and `C` (branch). Lines
+  attach to a port with `V-1.A`. The state lists the connected ports: `AB`, `AC`, `BC`, `ABC`,
+  `open` (all) or `closed`. Shut ports are solid, and the process lines on them are dashed.
+  - `L`: an L-port ball, joining C to A or to B (`AC`, `BC`) or `closed`.
+  - `T`: a T-port ball, joining any two ports or all three (`AB`, `AC`, `BC`, `ABC`); it
+    cannot shut off.
+  - With `L` or `T` the ball is drawn with its bore pointing at the connected ports. A state
+    the bore cannot make (an L-port at `ABC`, a T-port `closed`) is drawn dashed, with the
+    reason under the valve, so a wrong sensor value or template stands out.
+  - Without `L` or `T`, any combination is accepted and no bore is drawn.
+
+  ![L-port and T-port 3-way valves](docs/images/three-way-valves.png)
 
 ## Home Assistant card
 

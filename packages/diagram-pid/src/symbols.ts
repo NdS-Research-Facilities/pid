@@ -73,14 +73,15 @@ export const SYMBOLS: Record<EquipmentType, SymbolDef> = {
   valve: { width: 36, height: 24, turns: true, parts: [shape('M0 0 L36 24 V0 L0 24 Z')] },
   // Ports A (left) and B (right) on the flow axis, C (the T's stem) below; the body's centre is
   // the symbol's centre so straight-through streams run through it.
+  // Half as large again as a 2-way valve, so an L or T bore drawn inside stays readable.
   valve3: {
-    width: 36,
-    height: 44,
+    width: 54,
+    height: 66,
     turns: true,
     parts: [
-      { ...shape('M0 10 L18 22 L0 34 Z'), port: 'A' },
-      { ...shape('M36 10 L18 22 L36 34 Z'), port: 'B' },
-      { ...shape('M18 22 L6 44 H30 Z'), port: 'C' },
+      { ...shape('M0 15 L27 33 L0 51 Z'), port: 'A' },
+      { ...shape('M54 15 L27 33 L54 51 Z'), port: 'B' },
+      { ...shape('M27 33 L9 66 H45 Z'), port: 'C' },
     ],
   },
   instrument: { width: 42, height: 42, parts: [{ tag: 'circle', attrs: { cx: 21, cy: 21, r: 20 }, fill: true }] },

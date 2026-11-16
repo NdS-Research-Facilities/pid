@@ -1,0 +1,44 @@
+pid LR
+  title 3-way valves: L-port and T-port
+  %% L-port: the branch C joins A or B
+  F-1: feed "Supply"
+  V-1: valve3 L "L-port" = AC
+  D-1A: product "Line B"
+  D-1C: product "Line C"
+  F-1 --> V-1.A
+  V-1.B --> D-1A
+  V-1.C --> D-1C
+
+  F-2: feed "Supply"
+  V-2: valve3 L "L-port" = BC
+  D-2A: product "Line B"
+  D-2C: product "Line C"
+  F-2 --> V-2.A
+  V-2.B --> D-2A
+  V-2.C --> D-2C
+
+  %% T-port: also straight through, or all three
+  F-3: feed "Supply"
+  V-3: valve3 T "T-port" = AB
+  D-3A: product "Line B"
+  D-3C: product "Line C"
+  F-3 --> V-3.A
+  V-3.B --> D-3A
+  V-3.C --> D-3C
+
+  F-4: feed "Supply"
+  V-4: valve3 T "T-port" = ABC
+  D-4A: product "Line B"
+  D-4C: product "Line C"
+  F-4 --> V-4.A
+  V-4.B --> D-4A
+  V-4.C --> D-4C
+
+  %% Impossible: an L-port cannot join all three
+  F-5: feed "Supply"
+  V-5: valve3 L "L-port" = ABC
+  D-5A: product "Line B"
+  D-5C: product "Line C"
+  F-5 --> V-5.A
+  V-5.B --> D-5A
+  V-5.C --> D-5C

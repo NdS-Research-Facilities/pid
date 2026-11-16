@@ -5,8 +5,8 @@ import { pathBuilder, px, rotate, styleScope, styleText, themeStyleSheet, transf
 import type { MeasuredLabel } from '@mermaid-js/core/text';
 import type { LayoutModelNode, Side } from '@mermaid-js/core/layout';
 import { ARROW, endSides, LABEL_GAP, type NodePlacement, type PidLayout } from './layout.js';
-import type { Equipment, EquipmentType, PidModel, Stream } from './model.js';
-import { portOpen } from './state.js';
+import { PORTS, type Equipment, type EquipmentType, type PidModel, type Port, type Stream } from './model.js';
+import { boreProblem, connectedPorts, portOpen } from './state.js';
 import { symbolFor, type SymbolPart } from './symbols.js';
 
 const DASH = '4 3' as SafeValue;
@@ -110,6 +110,7 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
             : translate(r(left), r(top)),
     });
     for (const part of sym.parts) drawPart(w, part, eq, look, paint);
+    if (eq.type === 'valve3') drawBore(w, eq, paint);
     w.close();
     if (place.labels.bubble) drawBubble(w, place.labels.bubble, node, paint.text);
     drawLabels(w, layout, node, place, paint.text);
@@ -141,6 +142,35 @@ function drawPart(w: SvgWriter, part: SymbolPart, eq: Equipment, look: StateLook
     'stroke-width': 1.4,
     'stroke-dasharray': look.dashed ? DASH : undefined,
   });
+}
+
+/** The 3-way valve body's centre and where each port's bore line ends, in symbol coordinates. */
+const BORE_CENTRE: Point = { x: 27, y: 33 };
+const BORE_ENDS: Record<Port, Point> = { A: { x: 6, y: 33 }, B: { x: 48, y: 33 }, C: { x: 27, y: 58 } };
+const BALL_RADIUS = 9;
+const BORE_WIDTH = 4;
+
+/**
+ * An L- or T-port 3-way valve's ball, with its bore as a heavy line from the centre to each port
+ * the state connects, so the bore's shape shows which way the ball is turned. The bore is left
+ * out when the state is unknown or impossible for the bore.
+ */
+function drawBore(w: SvgWriter, eq: Equipment, paint: Paint): void {
+  if (!eq.bore) return;
+  w.leaf('circle', {
+    class: 'ball',
+    cx: BORE_CENTRE.x,
+    cy: BORE_CENTRE.y,
+    r: BALL_RADIUS,
+    fill: paint.bg,
+    stroke: paint.border,
+    'stroke-width': 1.4,
+  });
+  const ports = connectedPorts(eq.state);
+  if (!ports || ports.size < 2 || boreProblem(eq)) return;
+  const b = pathBuilder();
+  for (const port of PORTS) if (ports.has(port)) b.moveTo(BORE_CENTRE.x, BORE_CENTRE.y).lineTo(BORE_ENDS[port].x, BORE_ENDS[port].y);
+  w.leaf('path', { class: `bore bore-${eq.bore}`, d: b.done(), fill: 'none', stroke: paint.line, 'stroke-width': BORE_WIDTH });
 }
 
 /** ISA-5.1: function letters in the bubble's upper half, the loop number in the lower half. */
@@ -250,6 +280,7 @@ export function stateLook(eq: Equipment): StateLook {
       return { classes: [cls], fillOpacity: valve ? 1 - pos / 100 : 0, dashed: false };
     }
     case 'ports':
+      if (boreProblem(eq)) return { classes: ['state-invalid'], fillOpacity: 0, dashed: true };
       return { classes: [`state-${[...s.open!].sort().join('').toLowerCase() || 'closed'}`], fillOpacity: 0, dashed: false };
     case 'opening':
     case 'closing':

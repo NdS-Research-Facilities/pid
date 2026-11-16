@@ -22,6 +22,9 @@ export type InstrumentLocation = (typeof INSTRUMENT_LOCATIONS)[number];
 export const VALVE_KINDS = ['gate', 'globe', 'ball', 'plug', 'butterfly', 'check', 'relief'] as const;
 export type ValveKind = (typeof VALVE_KINDS)[number];
 
+export const BORES = ['L', 'T'] as const;
+export type Bore = (typeof BORES)[number];
+
 /**
  * Ports of a 3-way valve: `A` the inlet side, `B` the straight-through outlet, `C` the branch
  * (the stem of the T).
@@ -54,6 +57,11 @@ export interface Equipment {
   location?: InstrumentLocation;
   /** Valves only; `gate` when absent. */
   valveKind?: ValveKind;
+  /**
+   * 3-way valves only: the ball's bore. An `L` port joins the branch C to A or to B; a `T` port
+   * also joins A to B, or all three. Absent: any combination is accepted and no bore is drawn.
+   */
+  bore?: Bore;
   /** A valve a signal line drives: drawn as a control valve with an actuator on top. */
   actuated?: boolean;
   ast: string;

@@ -1,7 +1,7 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createMermaid } from 'mermaid';
 import { describe, expect, it } from 'vitest';
-import { parsePid, parseState, pid } from '../src/index.js';
+import { boreProblem, parsePid, parseState, pid } from '../src/index.js';
 
 const examplesDir = new URL('../../../examples/', import.meta.url);
 const read = (name: string) => readFileSync(new URL(name, examplesDir), 'utf8');
@@ -84,7 +84,7 @@ describe('instruments', () => {
   it('rejects variants on other equipment and unknown locations or kinds', () => {
     const { diagnostics } = parsePid('pid\n  P-1: pump dcs\n  TT-1: instrument somewhere\n  V-1: valve tap\n  A -.- B');
     expect(diagnostics.map((d) => d.message)).toEqual([
-      expect.stringContaining('Only instruments (location) and valves (kind) take a variant'),
+      expect.stringContaining('Only instruments (location), valves (kind) and 3-way valves (L or T) take a variant'),
       expect.stringContaining('Unknown instrument location "somewhere"'),
       expect.stringContaining('Unknown valve kind "tap"'),
     ]);
@@ -100,6 +100,33 @@ describe('valve kinds', () => {
     expect(model.equipment.find((e) => e.id === 'FV-7')?.actuated).toBe(true);
     expect(model.equipment.find((e) => e.id === 'PSV-1')?.actuated).toBeUndefined();
     expect(model.equipment.find((e) => e.id === 'V-2')?.actuated).toBeUndefined();
+  });
+});
+
+describe('3-way valve bores', () => {
+  const valve = (bore: string, state: string) => {
+    const { model, diagnostics } = parsePid(`pid\n  V: valve3 ${bore} = ${state}\n`);
+    expect(diagnostics).toEqual([]);
+    return model.equipment[0]!;
+  };
+
+  it('allows an L port to join C to A or B, or to shut', () => {
+    for (const s of ['AC', 'BC', 'closed', 'ca']) expect(boreProblem(valve('L', s)), s).toBeUndefined();
+    for (const s of ['AB', 'ABC', 'open']) expect(boreProblem(valve('L', s)), s).toMatch(/L-port/);
+  });
+
+  it('allows a T port any two ports or all three, but not to shut', () => {
+    for (const s of ['AB', 'AC', 'BC', 'ABC', 'open']) expect(boreProblem(valve('T', s)), s).toBeUndefined();
+    expect(boreProblem(valve('t', 'closed'))).toMatch(/T-port/);
+  });
+
+  it('accepts anything without a bore, and an unknown state with one', () => {
+    expect(boreProblem(valve('', 'ABC'))).toBeUndefined();
+    expect(boreProblem(valve('L', 'unavailable'))).toBeUndefined();
+  });
+
+  it('rejects other port letters', () => {
+    expect(parsePid('pid\n  V: valve3 X\n').diagnostics[0]?.message).toMatch(/Unknown 3-way valve port "X"/);
   });
 });
 
@@ -127,6 +154,12 @@ describe('Mermaid v13 integration', () => {
         expect(svg).toMatch(/class="equipment instrument state-unknown"/); // PT-103 unavailable
         expect(svg.match(/class="stream signal"/g)).toHaveLength(2);
         expect(svg.match(/class="stream connection"/g)).toHaveLength(4);
+      }
+      if (file === 'three-way-valves.mmd') {
+        expect(svg.match(/class="bore bore-L"/g)).toHaveLength(2);
+        expect(svg.match(/class="bore bore-T"/g)).toHaveLength(2);
+        expect(svg).toContain('state-invalid');
+        expect(svg).toContain('not possible on an L-port valve');
       }
       if (file === 'valves.mmd') {
         expect(svg).toContain('port-C port-shut');
