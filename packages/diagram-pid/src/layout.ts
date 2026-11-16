@@ -130,19 +130,21 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
   const nodes: LayoutNode[] = model.equipment.map((eq) => {
     const sym = symbolFor(eq);
     const instrument = eq.type === 'instrument';
+    // An instrument drawn as its own image or icon has no bubble: its tag goes with the labels.
+    const inBubble = instrument && !eq.image && !eq.icon;
     const tee = eq.type === 'tee';
     if (tee) {
       // A tee is a point on the pipe: no labels, and a box no larger than its dot.
       placements.set(eq.id, { labels: { width: 0, height: 0 }, side: 'below', width: sym.width, height: sym.height, turn: 0 });
       return { id: eq.id, width: sym.width, height: sym.height, shape: eq.type };
     }
-    const tag = instrument ? undefined : measure(eq.id, font, Style.Bold);
+    const tag = inBubble ? undefined : measure(eq.id, font, Style.Bold);
     const value = instrument && eq.state ? measure(instrumentText(eq.state), font, Style.Bold) : undefined;
     const name = eq.name ? measure(eq.name, small) : undefined;
     const state = !instrument && eq.state ? measure(equipmentStateText(eq), small, Style.Italic) : undefined;
     const lines = [tag, value, name, state].filter((l): l is MeasuredLabel => l !== undefined);
     let bubble: NodeLabels['bubble'];
-    if (instrument) {
+    if (inBubble) {
       const [letters, loop] = splitTag(eq.id);
       // ISA-5.1 bubbles hold up to four letters; a smaller face keeps longer ones inside.
       const fs = Math.max(7, Math.min(size0(letters), size - 2));

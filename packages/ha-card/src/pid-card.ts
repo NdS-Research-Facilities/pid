@@ -1,3 +1,4 @@
+import { icons } from '@mermaid-js/plugin-icons';
 import { createMermaid } from 'mermaid';
 import { pid } from '@nds/diagram-pid';
 import type { HomeAssistant, MermaidTheme, PidCardConfig } from './types.js';
@@ -55,6 +56,32 @@ const STYLE = `
 let nextId = 0;
 
 /**
+ * Icon packs every card knows: Material Design Icons, the set Home Assistant uses, so
+ * `icon TT-1 mdi:thermometer` works as `mdi:thermometer` does in HA. Fetched from jsDelivr only
+ * when a diagram uses one; `icon_packs: { mdi: /local/mdi.json }` serves it from Home Assistant.
+ */
+export const DEFAULT_ICON_PACKS: Readonly<Record<string, string>> = {
+  mdi: 'https://cdn.jsdelivr.net/npm/@iconify-json/mdi@1/icons.json',
+};
+
+/** Fetched packs, shared by every card on the page. */
+const packs = new Map<string, Promise<unknown>>();
+
+function fetchPack(url: string): Promise<unknown> {
+  let pack = packs.get(url);
+  if (!pack) {
+    pack = fetch(url).then((r) => {
+      if (!r.ok) throw new Error(`icon pack ${url}: HTTP ${r.status}`);
+      return r.json();
+    });
+    // A failed fetch is retried on the next render rather than remembered.
+    pack.catch(() => packs.delete(url));
+    packs.set(url, pack);
+  }
+  return pack;
+}
+
+/**
  * `custom:pid-card`: renders Mermaid v13 diagrams, `pid` P&IDs included, and re-renders when an
  * entity the diagram's templates read changes.
  */
@@ -91,6 +118,7 @@ export class PidCard extends HTMLElement {
   setConfig(config: PidCardConfig): void {
     if (!config || typeof config.content !== 'string' || !config.content.trim())
       throw new Error('pid-card: "content" (the diagram text) is required');
+    if (JSON.stringify(config.icon_packs ?? {}) !== JSON.stringify(this.config?.icon_packs ?? {})) this.mermaid = undefined;
     this.config = config;
     this.watched = [...new Set([...extractReferencedEntities(config.content), ...(config.entities ?? [])])];
     this.lastKey = undefined;
@@ -148,7 +176,11 @@ export class PidCard extends HTMLElement {
   private instance(): Promise<Mermaid> {
     this.mermaid ??= (async () => {
       const mermaid = createMermaid();
-      await mermaid.registerExternalDiagrams([pid]);
+      await mermaid.registerExternalDiagrams([pid, icons]);
+      const urls = { ...DEFAULT_ICON_PACKS, ...(this.config?.icon_packs ?? {}) };
+      mermaid.registerIconPacks(
+        Object.entries(urls).map(([name, url]) => ({ name, loader: () => fetchPack(url) as Promise<never> })),
+      );
       return mermaid;
     })();
     return this.mermaid;

@@ -34,7 +34,9 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@iconify-json/mdi": "^1.2.3",
     "@mermaid-js/core": "13.0.0-alpha.3",
+    "@mermaid-js/plugin-icons": "13.0.0-alpha.3",
     "mermaid": "13.0.0-alpha.3",
     "typescript": "7.0.2",
     "vitest": "5.1.0"

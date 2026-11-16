@@ -15,6 +15,8 @@ export const pid: DiagramPlugin<PidModel, PidLayout> = {
     ...model.equipment.flatMap((e) => (e.name ? [e.id, e.name] : [e.id])),
     ...model.streams.flatMap((s) => (s.label ? [s.label] : [])),
   ],
+  // Icon packs load only for diagrams that name them (`icon TT-1 mdi:thermometer`).
+  icons: (model) => [...new Set(model.equipment.flatMap((e) => (e.icon ? [e.icon.name] : [])))],
   layout: (model, ctx) => layoutPid(model, ctx),
   render: (model, layout, ctx, w) => renderPid(model, layout, ctx, w),
 };

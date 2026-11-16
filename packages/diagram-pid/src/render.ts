@@ -1,7 +1,20 @@
 import type { RenderContext } from '@mermaid-js/core';
 import type { Point } from '@mermaid-js/core/layout';
 import type { PathData, SafeValue, SvgWriter } from '@mermaid-js/core/svg';
-import { pathBuilder, px, rotate, styleScope, styleText, themeStyleSheet, transforms, translate } from '@mermaid-js/core/svg';
+import {
+  checkImageUrl,
+  checkStyle,
+  pathBuilder,
+  px,
+  rotate,
+  styleScope,
+  styleText,
+  themeStyleSheet,
+  transforms,
+  translate,
+  writeFragment,
+  type Attrs,
+} from '@mermaid-js/core/svg';
 import type { MeasuredLabel } from '@mermaid-js/core/text';
 import type { LayoutModelNode, Side } from '@mermaid-js/core/layout';
 import { hopPaths } from '@mermaid-js/core/layout/hops';
@@ -112,7 +125,9 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     const left = node.x - place.width / 2;
     const top = node.y - place.height / 2;
     const look = stateLook(eq);
-    w.open('g', { class: ['equipment', eq.type, ...look.classes].join(' '), 'data-id': eq.ast });
+    const styled = styleFor(eq, model, paint, ctx);
+    const classes = ['equipment', eq.type, ...look.classes, ...(eq.classes ?? []).map((c) => `class-${c}`)];
+    w.open('g', { class: classes.join(' '), 'data-id': eq.ast });
     w.open('g', {
       transform:
         place.turn === 90
@@ -121,11 +136,12 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
             ? transforms(translate(r(left), r(top + place.height)), rotate(-90))
             : translate(r(left), r(top)),
     });
-    for (const part of sym.parts) drawPart(w, part, eq, look, paint);
-    if (eq.type === 'valve3') drawBore(w, eq, paint);
+    if (eq.image || eq.icon) drawCustom(w, eq, place, look, styled, ctx);
+    for (const part of sym.parts) drawPart(w, part, eq, look, styled.paint, styled.shape);
+    if (eq.type === 'valve3') drawBore(w, eq, styled.paint);
     w.close();
-    if (place.labels.bubble) drawBubble(w, place.labels.bubble, node, paint.text);
-    drawLabels(w, layout, node, place, paint.text);
+    if (place.labels.bubble) drawBubble(w, place.labels.bubble, node, styled.text);
+    drawLabels(w, layout, node, place, styled.text);
     w.close();
   }
   w.close();
@@ -134,7 +150,70 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
 
 type Paint = Record<'line' | 'border' | 'bg' | 'text' | 'labelBg', ReturnType<RenderContext['theme']['color']>>;
 
-function drawPart(w: SvgWriter, part: SymbolPart, eq: Equipment, look: StateLook, paint: Paint): void {
+interface Styled {
+  /** The theme paint with the user's `fill` (background) and `stroke` (outline) in it. */
+  paint: Paint;
+  /** Other checked outline attributes: stroke-width, opacity, stroke-dasharray, … */
+  shape: Attrs;
+  /** Label attributes: `color` as `fill`, font weight and style. */
+  text: Attrs;
+  /** The styles set a fill or stroke: a custom image gets a backing card in them. */
+  painted: boolean;
+}
+
+/**
+ * The look `classDef` / `class` / `style` give a piece of equipment: class declarations in the
+ * order the classes were applied, then its own `style` on top. Mermaid checks every declaration;
+ * unknown properties and unsafe values are dropped with a render warning.
+ */
+function styleFor(eq: Equipment, model: PidModel, paint: Paint, ctx: RenderContext): Styled {
+  const decls = [...(eq.classes ?? []).flatMap((c) => model.classDefs.get(c) ?? []), ...(eq.style ?? [])];
+  if (!decls.length) return { paint, shape: {}, text: { fill: paint.text }, painted: false };
+  const checked = checkStyle(decls, (w) => ctx.warn(w));
+  const { fill, stroke, ...shape } = checked.shape;
+  return {
+    paint: {
+      ...paint,
+      bg: (fill as Paint['bg'] | undefined) ?? paint.bg,
+      border: (stroke as Paint['border'] | undefined) ?? paint.border,
+    },
+    shape,
+    text: { fill: paint.text, ...checked.text },
+    painted: fill !== undefined || stroke !== undefined,
+  };
+}
+
+/**
+ * An image or icon in place of the symbol. A `fill` or `stroke` from the styles draws a backing
+ * card behind it; an unknown or travelling state frames it dashed. An image URL Mermaid refuses,
+ * or an icon whose pack is not loaded, leaves a dashed placeholder.
+ */
+function drawCustom(w: SvgWriter, eq: Equipment, place: NodePlacement, look: StateLook, styled: Styled, ctx: RenderContext): void {
+  const { width, height } = place;
+  const frame = (attrs: Attrs) => w.leaf('rect', { x: -3, y: -3, width: width + 6, height: height + 6, rx: 4, ...attrs });
+  if (styled.painted) frame({ fill: styled.paint.bg, stroke: styled.paint.border, 'stroke-width': 1.2, ...styled.shape });
+  let drawn = false;
+  if (eq.image) {
+    const href = checkImageUrl(eq.image.url, { securityLevel: ctx.securityLevel, warn: (w) => ctx.warn(w) });
+    if (href) {
+      w.leaf('image', { class: 'custom-image', href, x: 0, y: 0, width, height, preserveAspectRatio: 'xMidYMid meet' });
+      drawn = true;
+    }
+  } else if (eq.icon) {
+    const glyph = ctx.icon?.(eq.icon.name, eq.icon.size, { paint: styled.paint.border });
+    if (glyph) {
+      w.open('g', { class: 'custom-icon' });
+      writeFragment(w, glyph);
+      w.close();
+      drawn = true;
+    } else {
+      ctx.warn({ code: 'PID_ICON_MISSING', message: `Icon "${eq.icon.name}" for ${eq.id} is not available: is its icon pack registered?` });
+    }
+  }
+  if (!drawn || look.dashed) frame({ fill: 'none', stroke: styled.paint.border, 'stroke-width': 1.2, 'stroke-dasharray': DASH });
+}
+
+function drawPart(w: SvgWriter, part: SymbolPart, eq: Equipment, look: StateLook, paint: Paint, extra: Attrs = {}): void {
   const d = part.tag === 'path' ? { d: toPath(String(part.attrs.d)) } : {};
   if (part.ink) {
     w.leaf(part.tag, { ...part.attrs, ...d, fill: paint.border, stroke: 'none' });
@@ -152,7 +231,8 @@ function drawPart(w: SvgWriter, part: SymbolPart, eq: Equipment, look: StateLook
     'fill-opacity': opacity > 0 && opacity < 1 ? r(opacity) : undefined,
     stroke: paint.border,
     'stroke-width': 1.4,
-    'stroke-dasharray': look.dashed ? DASH : undefined,
+    ...extra,
+    ...(look.dashed ? { 'stroke-dasharray': DASH } : {}),
   });
 }
 
@@ -186,14 +266,14 @@ function drawBore(w: SvgWriter, eq: Equipment, paint: Paint): void {
 }
 
 /** ISA-5.1: function letters in the bubble's upper half, the loop number in the lower half. */
-function drawBubble(w: SvgWriter, b: NonNullable<NodePlacement['labels']['bubble']>, node: Point, text: Paint['text']): void {
+function drawBubble(w: SvgWriter, b: NonNullable<NodePlacement['labels']['bubble']>, node: Point, text: Attrs): void {
   const shift = b.size * 0.6;
-  w.label(b.letters, node.x, node.y - shift, { class: 'instrument-letters', fill: text, 'font-size': b.size, 'font-weight': 'bold' });
-  if (b.loop.width > 0) w.label(b.loop, node.x, node.y + shift, { class: 'instrument-loop', fill: text, 'font-size': b.size });
+  w.label(b.letters, node.x, node.y - shift, { class: 'instrument-letters', ...text, 'font-size': b.size, 'font-weight': 'bold' });
+  if (b.loop.width > 0) w.label(b.loop, node.x, node.y + shift, { class: 'instrument-loop', ...text, 'font-size': b.size });
 }
 
 /** Tag (bold), name and state (italic), centred in a column on the placement's label side. */
-function drawLabels(w: SvgWriter, layout: PidLayout, node: Point, place: NodePlacement, text: Paint['text']): void {
+function drawLabels(w: SvgWriter, layout: PidLayout, node: Point, place: NodePlacement, text: Attrs): void {
   const { labels, side } = place;
   const fs = layout.fontSize;
   let cx = node.x;
@@ -203,7 +283,7 @@ function drawLabels(w: SvgWriter, layout: PidLayout, node: Point, place: NodePla
   else cx = node.x + (side === 'right' ? 1 : -1) * (place.width / 2 + LABEL_GAP + labels.width / 2);
   const line = (l: MeasuredLabel | undefined, attrs: Parameters<SvgWriter['label']>[3]) => {
     if (!l) return;
-    w.label(l, cx, y + l.height / 2, { fill: text, ...attrs });
+    w.label(l, cx, y + l.height / 2, { ...text, ...attrs });
     y += l.height;
   };
   line(labels.tag, { 'font-size': fs, 'font-weight': 'bold' });
@@ -249,7 +329,14 @@ function attach(pts: Point[], atEnd: boolean, layout: PidLayout, eq: Equipment |
   const depth = eq.type === 'tee' ? 0 : round ? Math.sqrt(round * round - (v - V(node)) ** 2) : symU;
   const end = at(U(node) + sign * depth, v);
   let tail: Point[];
+  const Q = pts.length >= 3 ? pts[atEnd ? i - 2 : 2] : undefined;
   if (Math.abs(V(E) - v) < 0.5 && Math.abs(V(P) - v) < 0.5) tail = [end];
+  else if (Q && Math.abs(V(P) - V(E)) < 0.5 && Math.abs(U(Q) - U(P)) < 0.5) {
+    // The run in is straight and the bend before it turns across: move that bend to line the
+    // run up with the symbol, instead of adding a jog at the end.
+    pts[atEnd ? i - 1 : 1] = at(U(P), v);
+    tail = [end];
+  }
   else {
     const stub = at(U(node) + sign * (boxU + STUB), v);
     tail = [at(U(stub), V(P)), stub, end];

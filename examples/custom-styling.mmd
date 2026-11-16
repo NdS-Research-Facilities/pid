@@ -1,0 +1,30 @@
+pid LR
+  title Heating loop: custom colours, icons and images
+  classDef hot fill:#ffebee,stroke:#c62828,color:#b71c1c
+  classDef cold fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+  classDef alarm fill:#ffcdd2,stroke:#d50000,stroke-width:3px,color:#d50000,font-weight:bold
+  classDef running fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+
+  HP-1: block "Heat pump" = on
+  image HP-1 assets/heat-pump.png 64
+  J-1: tee
+  T-101: tank "Buffer"
+  P-101: pump "Circulation" = on
+  D-1: product "Radiators"
+  TT-101: instrument "Flow" = 55.2 °C
+  TT-102: instrument "Return" = 31.0 °C
+  PT-103: instrument "Pressure" = 0.6 bar
+  icon PT-103 mdi:gauge-low 40
+  TT-104: instrument "Outdoor" = -4.5 °C
+  icon TT-104 mdi:snowflake-thermometer 40
+
+  HP-1 -->|1| J-1 --> T-101 -->|2| P-101 -->|3| D-1
+  J-1 --- TT-101
+  P-101 --- TT-102
+  T-101 --- PT-103
+  TT-104 -.-> HP-1
+
+  class TT-101 hot
+  class TT-102,TT-104 cold
+  class PT-103 alarm
+  class P-101 running

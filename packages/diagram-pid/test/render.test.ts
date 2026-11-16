@@ -1,7 +1,8 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { icons } from '@mermaid-js/plugin-icons';
 import { createMermaid } from 'mermaid';
 import { describe, expect, it } from 'vitest';
-import { boreProblem, parsePid, parseState, pid } from '../src/index.js';
+import { boreProblem, declarations, parsePid, parseState, pid } from '../src/index.js';
 
 const examplesDir = new URL('../../../examples/', import.meta.url);
 const read = (name: string) => readFileSync(new URL(name, examplesDir), 'utf8');
@@ -140,6 +141,25 @@ describe('tees', () => {
   });
 });
 
+describe('custom styling', () => {
+  it('reads classDef, class, style, image and icon', () => {
+    const { model, diagnostics } = parsePid(read('custom-styling.mmd') + '\n  style TT-101 stroke-width:2px\n');
+    expect(diagnostics).toEqual([]);
+    expect(model.classDefs.get('alarm')).toEqual(['fill:#ffcdd2', 'stroke:#d50000', 'stroke-width:3px', 'color:#d50000', 'font-weight:bold']);
+    const eq = (id: string) => model.equipment.find((e) => e.id === id)!;
+    expect(eq('TT-102').classes).toEqual(['cold']);
+    expect(eq('TT-104').classes).toEqual(['cold']);
+    expect(eq('TT-101').style).toEqual(['stroke-width:2px']);
+    expect(eq('HP-1').image).toEqual({ url: 'assets/heat-pump.png', width: 64, height: 64 });
+    expect(eq('PT-103').icon).toEqual({ name: 'mdi:gauge-low', size: 40 });
+    expect(pid.icons!(model)).toEqual(['mdi:gauge-low', 'mdi:snowflake-thermometer']);
+  });
+
+  it('splits declarations at commas outside parentheses', () => {
+    expect(declarations('fill:rgb(1, 2, 3),stroke:#000;')).toEqual(['fill:rgb(1, 2, 3)', 'stroke:#000']);
+  });
+});
+
 describe('Mermaid v13 integration', () => {
   it('detects and renders a pid to SVG', async () => {
     const mermaid = createMermaid();
@@ -152,7 +172,8 @@ describe('Mermaid v13 integration', () => {
 
   it('renders every example, marking shut ports and blocked streams', async () => {
     const mermaid = createMermaid();
-    await mermaid.registerExternalDiagrams([pid]);
+    await mermaid.registerExternalDiagrams([pid, icons]);
+    mermaid.registerIconPacks([{ name: 'mdi', loader: () => import('@iconify-json/mdi/icons.json').then((m) => m.default) }]);
     const out = new URL('../../../out/', import.meta.url);
     mkdirSync(out, { recursive: true });
     for (const file of readdirSync(examplesDir).filter((f) => f.endsWith('.mmd') && !f.startsWith('.'))) {
@@ -164,6 +185,13 @@ describe('Mermaid v13 integration', () => {
         expect(svg).toMatch(/class="equipment instrument state-unknown"/); // PT-103 unavailable
         expect(svg.match(/class="stream signal"/g)).toHaveLength(2);
         expect(svg.match(/class="stream connection"/g)).toHaveLength(4);
+      }
+      if (file === 'custom-styling.mmd') {
+        expect(svg).toContain('class-alarm');
+        expect(svg).toContain('#d50000');
+        expect(svg).toContain('stroke-width="3px"');
+        expect(svg).toMatch(/<image class="custom-image" href="assets\/heat-pump.png"/);
+        expect(svg.match(/class="custom-icon"/g)).toHaveLength(2);
       }
       if (file === 'junctions.mmd') {
         expect(svg.match(/class="equipment tee"/g)).toHaveLength(3);

@@ -163,8 +163,10 @@ export function valveSymbol(kind: ValveKind = 'gate', actuated = false): SymbolD
   };
 }
 
-/** The symbol drawn for `eq`. */
-export function symbolFor(eq: Pick<Equipment, 'type' | 'location' | 'actuated' | 'valveKind'>): SymbolDef {
+/** The symbol drawn for `eq`. A custom image or icon takes the symbol's place (no parts). */
+export function symbolFor(eq: Pick<Equipment, 'type' | 'location' | 'actuated' | 'valveKind' | 'image' | 'icon'>): SymbolDef {
+  if (eq.image) return { width: eq.image.width, height: eq.image.height, parts: [] };
+  if (eq.icon) return { width: eq.icon.size, height: eq.icon.size, parts: [] };
   if (eq.type === 'instrument') return INSTRUMENTS[eq.location ?? 'field'];
   if (eq.type === 'valve') return valveSymbol(eq.valveKind, eq.actuated);
   return SYMBOLS[eq.type];

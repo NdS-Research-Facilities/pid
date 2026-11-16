@@ -103,6 +103,39 @@ The tag is drawn inside the bubble, ISA-5.1 style: function letters over the loo
 
   ![L-port and T-port 3-way valves](docs/images/three-way-valves.png)
 
+### Colours, icons and images
+
+Mermaid's own styling statements work on equipment and instruments:
+
+```
+classDef alarm fill:#ffcdd2,stroke:#d50000,stroke-width:3px,color:#d50000,font-weight:bold
+classDef ok fill:#e8f5e9,stroke:#2e7d32
+class PT-103 alarm
+class TT-101,TT-102 ok
+style P-101 fill:#e8f5e9,stroke:#2e7d32
+```
+
+`fill` colours the symbol, `stroke` its outline (and a closed valve's solid fill), `color` the
+labels; `stroke-width`, `stroke-dasharray`, `opacity`, `font-weight` and `font-style` apply too.
+Mermaid checks every value and drops unsafe ones with a warning. Each class is also written as
+an SVG class, `class-<name>`. In the card the class can come from a template, so colours follow
+live values:
+
+```
+class TT-101 ${if(states['sensor.flow_temp'] > 60, 'alarm', 'ok')}
+```
+
+A picture can replace any symbol, keeping its tag, value and name labels:
+
+| Statement | Draws |
+| --- | --- |
+| `icon PT-103 mdi:gauge [size]` | an [Iconify](https://icon-sets.iconify.design/) icon, default 48 px; tinted with the `stroke` colour |
+| `image HP-1 /local/heat-pump.png [W[xH]]` | an image, default 48 px, at most 240 |
+
+In Home Assistant, put images in `config/www/` and use `/local/...` URLs.
+
+![Colours, icons and an image](docs/images/custom-styling.png)
+
 ## Home Assistant card
 
 `custom:pid-card` (in `packages/ha-card`) is a Lovelace card built on Mermaid v13 with the P&ID
@@ -132,12 +165,19 @@ content: |
 | `entities` | — | Extra entities to watch; those in templates are found automatically |
 | `numeric_fallback` | `0` | Number used when a template needs one but the state is not numeric |
 | `card_size` | `4` | Card height in the dashboard grid |
+| `icon_packs` | `mdi` | Iconify packs by prefix, as URLs of their JSON (`@iconify-json/<pack>/icons.json`) |
 
 Templates use the same syntax as [ha-mermaid](https://github.com/pajew-ski/ha-mermaid), whose
 template engine is included (MIT): `${states['e']}`, `${attr('e', 'a')}`, `${round(x, 1)}`,
 `${fixed(x, 2)}`, `${calc(...)}`, `${if(cond, a, b)}`, `${is_state('e', 's')}`,
 `${timestamp('e')}` and more. Entity text is masked so it cannot break the diagram syntax; the
 P&ID parser decodes it for display.
+
+Icons: `mdi` (Material Design Icons, the set Home Assistant uses) is preset and fetched from
+jsDelivr only when a diagram uses an `mdi:` icon. To serve it from Home Assistant instead, copy
+`icons.json` from the [`@iconify-json/mdi`](https://www.npmjs.com/package/@iconify-json/mdi)
+package to `config/www/mdi.json` and set `icon_packs: { mdi: /local/mdi.json }`. Other packs
+(`fa6-solid`, `simple-icons`, …) are added the same way.
 
 ### Install
 

@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { describe, expect, it, vi } from 'vitest';
 import { PidCard } from '../src/pid-card.js';
 import type { HomeAssistant, HassEntity } from '../src/types.js';
 
@@ -124,5 +126,41 @@ describe('pid-card', () => {
     fixed.card.hass = hass([]);
     await done;
     expect(fixed.card.shadowRoot!.querySelector('.diagram')!.classList.contains('auto')).toBe(false);
+  });
+
+  it('draws mdi icons, fetching the pack once', async () => {
+    const mdi = readFileSync(createRequire(import.meta.url).resolve('@iconify-json/mdi/icons.json'), 'utf8');
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL) => new Response(mdi, { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { card, rendered, svg } = mount({ content: 'pid LR\n  PT-1: instrument = 3 bar\n  icon PT-1 mdi:gauge\n' });
+      const done = rendered();
+      card.hass = hass([]);
+      await done;
+      expect(svg()).toContain('custom-icon');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0]![0])).toContain('@iconify-json/mdi');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('switches classes from templates, so colours follow live values', async () => {
+    const content = `pid LR
+  classDef alarm fill:#ffcdd2,stroke:#d50000
+  classDef ok fill:#e8f5e9,stroke:#2e7d32
+  TT-1: instrument = \${states['sensor.t']} °C
+  class TT-1 \${if(states['sensor.t'] > 60, 'alarm', 'ok')}
+`;
+    const { card, rendered, svg } = mount({ content });
+    let done = rendered();
+    card.hass = hass([entity('sensor.t', '45')]);
+    await done;
+    expect(svg()).toContain('class-ok');
+    done = rendered();
+    card.hass = hass([entity('sensor.t', '72', {}, '2026-11-16T10:05:00Z')]);
+    await done;
+    expect(svg()).toContain('class-alarm');
+    expect(svg()).toContain('#d50000');
   });
 });

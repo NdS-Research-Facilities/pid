@@ -24,6 +24,14 @@ const TITLE = /^title\s+(.+)$/;
 const EQUIPMENT = /^([A-Za-z][\w.-]*)\s*:\s*([A-Za-z][A-Za-z0-9]*)(?:\s+([A-Za-z]+))?(?:\s+"([^"]*)")?(?:\s*=\s*(.*))?$/;
 /** `TAG = value`: a state line, kept apart from the drawing so templates touch only these. */
 const STATE = /^([A-Za-z][\w.-]*)\s*=\s*(.*)$/;
+const CLASSDEF = /^classDef\s+([\w-]+(?:\s*,\s*[\w-]+)*)\s+(.+)$/;
+const CLASS = /^class\s+([A-Za-z][\w.-]*(?:\s*,\s*[A-Za-z][\w.-]*)*)\s+([\w-]+)$/;
+const STYLE = /^style\s+([A-Za-z][\w.-]*)\s+(.+)$/;
+const IMAGE = /^image\s+([A-Za-z][\w.-]*)\s+(\S+)(?:\s+(\d+)(?:x(\d+))?)?$/;
+const ICON = /^icon\s+([A-Za-z][\w.-]*)\s+([a-z0-9-]+:[a-z0-9-]+)(?:\s+(\d+))?$/i;
+/** Default and largest size of a custom image or icon, px. */
+const IMAGE_SIZE = 48;
+const IMAGE_MAX = 240;
 const STREAM_PROPS = /^stream\s+("[^"]*"|[^\s{]+)\s*\{(.*)\}$/;
 const ID = /^[A-Za-z][\w.-]*$/;
 /** A line operator with an optional `|label|` straight after it. */
@@ -41,7 +49,7 @@ export function detectPid(text: string): boolean {
 }
 
 export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preprocessed'>): ParseResult<PidModel> {
-  const model: PidModel = { direction: 'LR', equipment: [], streams: [], properties: new Map() };
+  const model: PidModel = { direction: 'LR', equipment: [], streams: [], properties: new Map(), classDefs: new Map() };
   const diagnostics: Diagnostic[] = [];
   const children: AstNode[] = [];
   const byId = new Map<string, Equipment>();
@@ -83,6 +91,25 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
     }
 
     let m: RegExpExecArray | null;
+    const size = (v: string | undefined, fallback: number) => Math.min(IMAGE_MAX, Math.max(8, v ? Number(v) : fallback));
+    if ((m = CLASSDEF.exec(line))) {
+      for (const name of m[1]!.split(',')) model.classDefs.set(name.trim(), declarations(m[2]!));
+      continue;
+    } else if ((m = CLASS.exec(line))) {
+      for (const id of m[1]!.split(',')) (touch(id.trim(), start, end).classes ??= []).push(m[2]!);
+      continue;
+    } else if ((m = STYLE.exec(line))) {
+      const eq = touch(m[1]!, start, end);
+      eq.style = [...(eq.style ?? []), ...declarations(m[2]!)];
+      continue;
+    } else if ((m = IMAGE.exec(line))) {
+      const width = size(m[3], IMAGE_SIZE);
+      touch(m[1]!, start, end).image = { url: m[2]!, width, height: size(m[4], width) };
+      continue;
+    } else if ((m = ICON.exec(line))) {
+      touch(m[1]!, start, end).icon = { name: m[2]!.toLowerCase(), size: size(m[3], IMAGE_SIZE) };
+      continue;
+    }
     if ((m = TITLE.exec(line))) {
       model.title = decodeEntities(m[1]!.trim());
     } else if ((m = STREAM_PROPS.exec(line))) {
@@ -164,6 +191,23 @@ export function decodeEntities(s: string): string {
   return s.replace(/#(\d+|[a-z]+);/gi, (m, code: string) =>
     /^\d+$/.test(code) ? String.fromCodePoint(Number(code)) : (NAMED[code.toLowerCase()] ?? m),
   );
+}
+
+/** Splits `fill:#f9f,stroke:rgb(1,2,3)` at the commas outside parentheses; drops a trailing `;`. */
+export function declarations(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of text.trim().replace(/;$/, '')) {
+    if (ch === '(') depth++;
+    if (ch === ')') depth = Math.max(0, depth - 1);
+    if (ch === ',' && depth === 0) {
+      out.push(cur.trim());
+      cur = '';
+    } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out.filter(Boolean);
 }
 
 function unquote(s: string): string {

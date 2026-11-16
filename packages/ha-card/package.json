@@ -11,10 +11,12 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@mermaid-js/plugin-icons": "13.0.0-alpha.3",
     "@nds/diagram-pid": "workspace:*",
     "mermaid": "13.0.0-alpha.3"
   },
   "devDependencies": {
+    "@iconify-json/mdi": "^1.2.3",
     "@types/node": "^22.20.5",
     "esbuild": "^0.28.2",
     "happy-dom": "^21.0.4",

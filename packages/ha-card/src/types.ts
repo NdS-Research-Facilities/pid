@@ -29,4 +29,9 @@ export interface PidCardConfig {
   /** Used when a template needs a number but the entity state is not one. */
   numeric_fallback?: number;
   card_size?: number;
+  /**
+   * Iconify icon packs by prefix, as URLs of their JSON (`@iconify-json/<pack>/icons.json`).
+   * `mdi` is preset; a pack is fetched only when a diagram uses one of its icons.
+   */
+  icon_packs?: Record<string, string>;
 }

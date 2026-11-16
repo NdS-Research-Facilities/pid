@@ -64,6 +64,14 @@ export interface Equipment {
   bore?: Bore;
   /** A valve a signal line drives: drawn as a control valve with an actuator on top. */
   actuated?: boolean;
+  /** `class TAG name`: classDef names applied in order, then `style` declarations on top. */
+  classes?: string[];
+  /** `style TAG fill:#fdd,stroke:#c00`: declarations as written. */
+  style?: string[];
+  /** `image TAG url [WxH]`: a picture drawn in place of the symbol. */
+  image?: { url: string; width: number; height: number };
+  /** `icon TAG pack:name [size]`: an Iconify icon (e.g. `mdi:thermometer`) in place of the symbol. */
+  icon?: { name: string; size: number };
   ast: string;
 }
 
@@ -101,4 +109,6 @@ export interface PidModel {
   streams: Stream[];
   /** Stream tag → its property table (`stream 1 { T: 25 °C, F: 1200 kg/h }`). */
   properties: Map<string, StreamProperty[]>;
+  /** `classDef name decl,decl`: style declarations by class name. */
+  classDefs: Map<string, string[]>;
 }
