@@ -28,6 +28,12 @@ jobs:
           name: pid-card
           path: packages/ha-card/dist/pid-card.js
       # A v* tag publishes the card as a release asset, which is where HACS installs it from.
+      - name: Check the tag matches the card version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          node -e "const p=require('./packages/ha-card/package.json'); if (p.version !== '$v') { console.error('package.json is ' + p.version + ', tag is $v'); process.exit(1) }"
+          grep -q "CARD_VERSION = '$v'" packages/ha-card/src/pid-card.ts || { echo "CARD_VERSION does not match $v"; exit 1; }
       - if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}

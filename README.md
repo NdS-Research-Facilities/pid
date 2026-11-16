@@ -1,5 +1,9 @@
 # pid
 
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
+[![CI](https://github.com/NdS-Research-Facilities/pid/actions/workflows/ci.yml/badge.svg)](https://github.com/NdS-Research-Facilities/pid/actions/workflows/ci.yml)
+[![HACS validation](https://github.com/NdS-Research-Facilities/pid/actions/workflows/hacs.yml/badge.svg)](https://github.com/NdS-Research-Facilities/pid/actions/workflows/hacs.yml)
+
 Declarative piping and instrumentation diagrams (P&IDs) for
 [Mermaid v13](https://mermaid.js.org/intro/v13-alpha.html), with live values from Home Assistant.
 
@@ -140,8 +144,14 @@ P&ID parser decodes it for display.
 **Manual:** run `pnpm build`, copy `packages/ha-card/dist/pid-card.js` to `config/www/`, and add
 `/local/pid-card.js` as a *JavaScript module* under Settings → Dashboards → Resources.
 
-**HACS:** add this repository as a custom repository of type *Dashboard*. HACS installs the
-`pid-card.js` attached to the latest GitHub release; CI attaches it when a `v*` tag is pushed.
+**HACS:**
+
+[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=NdS-Research-Facilities&repository=pid&category=plugin)
+
+Or in HACS: ⋮ → *Custom repositories* → add `https://github.com/NdS-Research-Facilities/pid`
+with type *Dashboard*, then download *P&ID card (Mermaid v13)* and reload the browser. HACS
+installs the `pid-card.js` attached to the latest GitHub release; CI builds and attaches it when
+a `v*` tag is pushed.
 
 The bundle is about 2.1 MB (0.8 MB gzipped), because it carries all of Mermaid v13.
 
