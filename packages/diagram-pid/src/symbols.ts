@@ -1,10 +1,12 @@
-import type { Equipment, EquipmentType, InstrumentLocation, Port } from './model.js';
+import type { Equipment, EquipmentType, InstrumentLocation, Port, ValveKind } from './model.js';
 
 export interface SymbolPart {
   tag: 'path' | 'circle' | 'rect';
   attrs: Record<string, string | number>;
   /** Filled with the node background (true) or drawn as a bare line (false). */
   fill: boolean;
+  /** Always filled with the line colour (a globe valve's dot), whatever the state. */
+  ink?: boolean;
   /** The 3-way valve port this part stands for: drawn solid when that port is shut. */
   port?: Port;
 }
@@ -105,25 +107,63 @@ const INSTRUMENTS: Record<InstrumentLocation, SymbolDef> = {
   },
 };
 
+const ink = (tag: 'circle' | 'rect', attrs: SymbolPart['attrs']): SymbolPart => ({ tag, attrs, fill: false, ink: true });
+
+/** A valve body of `kind`, 36 × 24 with its top at `y`; the flow runs through its centre. */
+function valveBody(kind: Exclude<ValveKind, 'relief'>, y: number): SymbolPart[] {
+  const c = y + 12;
+  const bow = shape(`M0 ${y} L36 ${y + 24} V${y} L0 ${y + 24} Z`);
+  switch (kind) {
+    case 'gate':
+      return [bow];
+    case 'globe':
+      return [bow, ink('circle', { cx: 18, cy: c, r: 4 })];
+    case 'ball':
+      return [bow, { tag: 'circle', attrs: { cx: 18, cy: c, r: 6.5 }, fill: true }];
+    case 'plug':
+      return [bow, { tag: 'rect', attrs: { x: 14, y: c - 5, width: 8, height: 10 }, fill: true }];
+    case 'butterfly':
+      return [bow, line(`M18 ${y} V${y + 24}`), ink('circle', { cx: 18, cy: c, r: 3 })];
+    case 'check':
+      // Flow arrow against a seat: passes left to right only.
+      return [shape(`M0 ${y + 2} L31 ${c} L0 ${y + 22} Z`), line(`M34 ${y} V${y + 24}`)];
+  }
+}
+
 /**
- * A control valve: the valve body with a stem and a diaphragm actuator above it. The space below
- * the body mirrors the actuator, so the body stays at the symbol's centre on the process line.
+ * A relief valve: inlet from the left, outlet down (the side a 3-way valve's C port uses), and
+ * the spring above. The body sits at the centre so the inlet line runs straight in.
  */
-const ACTUATED_VALVE: SymbolDef = {
+const RELIEF_VALVE: SymbolDef = {
   width: 36,
-  height: 68,
+  height: 44,
   turns: true,
   parts: [
-    shape('M0 22 L36 46 V22 L0 46 Z'),
-    line('M18 34 V12'),
-    line('M6 12 A12 11 0 0 1 30 12 Z'),
+    shape('M0 12 L18 22 L0 32 Z'),
+    shape('M18 22 L6 44 H30 Z'),
+    line('M18 22 V18 L12 16 L24 12 L12 8 L24 4 L18 2'),
   ],
 };
 
+/**
+ * A valve of `kind`. A control valve (`actuated`) has a stem and a diaphragm actuator above
+ * the body; the space below mirrors it, so the body stays at the symbol's centre on the line.
+ */
+export function valveSymbol(kind: ValveKind = 'gate', actuated = false): SymbolDef {
+  if (kind === 'relief') return RELIEF_VALVE;
+  if (!actuated) return { width: 36, height: 24, turns: true, parts: valveBody(kind, 0) };
+  return {
+    width: 36,
+    height: 68,
+    turns: true,
+    parts: [...valveBody(kind, 22), line('M18 34 V12'), line('M6 12 A12 11 0 0 1 30 12 Z')],
+  };
+}
+
 /** The symbol drawn for `eq`. */
-export function symbolFor(eq: Pick<Equipment, 'type' | 'location' | 'actuated'>): SymbolDef {
+export function symbolFor(eq: Pick<Equipment, 'type' | 'location' | 'actuated' | 'valveKind'>): SymbolDef {
   if (eq.type === 'instrument') return INSTRUMENTS[eq.location ?? 'field'];
-  if (eq.type === 'valve' && eq.actuated) return ACTUATED_VALVE;
+  if (eq.type === 'valve') return valveSymbol(eq.valveKind, eq.actuated);
   return SYMBOLS[eq.type];
 }
 

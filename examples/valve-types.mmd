@@ -1,0 +1,26 @@
+pid LR
+  title Valve kinds
+  F-1: feed "Supply"
+  T-1: tank "Header"
+  V-1: valve gate "Gate" = open
+  V-2: valve globe "Globe" = 40%
+  V-3: valve ball "Ball" = closed
+  V-4: valve plug "Plug" = open
+  V-5: valve butterfly "Butterfly" = 70%
+  V-6: valve check "Check"
+  PSV-1: valve relief "Relief" = closed
+  FV-7: valve globe "Control" = 55%
+  FIC-7: instrument dcs "Flow control" = SP 12 m³/h
+  D-1: product "Users"
+  D-2: product "Flare"
+
+  F-1 --> T-1
+  T-1 --> V-1 --> D-1
+  T-1 --> V-2 --> D-1
+  T-1 --> V-3 --> D-1
+  T-1 --> V-4 --> D-1
+  T-1 --> V-5 --> D-1
+  T-1 --> V-6 --> D-1
+  T-1 --> FV-7 --> D-1
+  T-1 --> PSV-1 --> D-2
+  FIC-7 -.-> FV-7

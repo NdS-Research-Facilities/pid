@@ -37,6 +37,7 @@ pid LR
 | `title Text` | Diagram title |
 | `TAG: type "Name" = state` | Equipment; name and state optional |
 | `TAG: instrument [location] "Name" = value` | ISA-5.1 instrument; see below |
+| `TAG: valve [kind] "Name" = state` | Valve; see below |
 | `TAG = state` | Set a state on its own line (handy for templates) |
 | `A --> B -->\|1\| C` | Process line; `\|1\|` is the stream tag |
 | `A --- B` | Instrument connection to the process (thin line) |
@@ -63,7 +64,9 @@ The tag is drawn inside the bubble, ISA-5.1 style: function letters over the loo
 
 ### Valves
 
-- `valve`: state `open`, `closed`, `opening`, `closing`, a position `0`–`100` (`%` optional), or
+- `valve [kind]`: kinds `gate` (default), `globe`, `ball`, `plug`, `butterfly`, `check` and
+  `relief` (angle valve with spring; its outlet leaves sideways, like a 3-way valve's `C`).
+  State `open`, `closed`, `opening`, `closing`, a position `0`–`100` (`%` optional), or
   `unavailable`. Closed is drawn solid, open hollow, partly open shaded; moving or unknown is
   dashed. A valve that a signal line drives (`TIC-101 -.-> TV-101`) is drawn as a control valve
   with an actuator, and the signal lands on the actuator.

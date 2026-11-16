@@ -81,12 +81,25 @@ describe('instruments', () => {
     expect(kinds).toContain('S-1>TV-101');
   });
 
-  it('rejects locations on equipment and unknown locations', () => {
-    const { diagnostics } = parsePid('pid\n  P-1: pump dcs\n  TT-1: instrument somewhere\n  A -.- B');
+  it('rejects variants on other equipment and unknown locations or kinds', () => {
+    const { diagnostics } = parsePid('pid\n  P-1: pump dcs\n  TT-1: instrument somewhere\n  V-1: valve tap\n  A -.- B');
     expect(diagnostics.map((d) => d.message)).toEqual([
-      expect.stringContaining('Only instruments take a location'),
+      expect.stringContaining('Only instruments (location) and valves (kind) take a variant'),
       expect.stringContaining('Unknown instrument location "somewhere"'),
+      expect.stringContaining('Unknown valve kind "tap"'),
     ]);
+  });
+});
+
+describe('valve kinds', () => {
+  it('reads kinds, makes signalled valves control valves, but never a relief valve', () => {
+    const { model, diagnostics } = parsePid(read('valve-types.mmd') + '\n  FIC-7 -.-> PSV-1\n');
+    expect(diagnostics).toEqual([]);
+    const kinds = Object.fromEntries(model.equipment.filter((e) => e.type === 'valve').map((e) => [e.id, e.valveKind]));
+    expect(kinds).toEqual({ 'V-1': 'gate', 'V-2': 'globe', 'V-3': 'ball', 'V-4': 'plug', 'V-5': 'butterfly', 'V-6': 'check', 'PSV-1': 'relief', 'FV-7': 'globe' });
+    expect(model.equipment.find((e) => e.id === 'FV-7')?.actuated).toBe(true);
+    expect(model.equipment.find((e) => e.id === 'PSV-1')?.actuated).toBeUndefined();
+    expect(model.equipment.find((e) => e.id === 'V-2')?.actuated).toBeUndefined();
   });
 });
 

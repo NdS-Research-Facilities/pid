@@ -16,6 +16,13 @@ export const INSTRUMENT_LOCATIONS = ['field', 'panel', 'dcs', 'plc', 'computer']
 export type InstrumentLocation = (typeof INSTRUMENT_LOCATIONS)[number];
 
 /**
+ * Valve kinds: `gate` (the plain bowtie, default), `globe`, `ball`, `plug`, `butterfly`,
+ * `check` (non-return) and `relief` (an angle valve with a spring, discharging sideways).
+ */
+export const VALVE_KINDS = ['gate', 'globe', 'ball', 'plug', 'butterfly', 'check', 'relief'] as const;
+export type ValveKind = (typeof VALVE_KINDS)[number];
+
+/**
  * Ports of a 3-way valve: `A` the inlet side, `B` the straight-through outlet, `C` the branch
  * (the stem of the T).
  */
@@ -45,6 +52,8 @@ export interface Equipment {
   state?: EquipmentState;
   /** Instruments only. */
   location?: InstrumentLocation;
+  /** Valves only; `gate` when absent. */
+  valveKind?: ValveKind;
   /** A valve a signal line drives: drawn as a control valve with an actuator on top. */
   actuated?: boolean;
   ast: string;

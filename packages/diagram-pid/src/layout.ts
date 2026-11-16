@@ -1,7 +1,7 @@
 import type { RenderContext } from '@mermaid-js/core';
 import type { Dir, LayoutEdge, LayoutModel, LayoutNode, Side } from '@mermaid-js/core/layout';
 import { layoutLabel, Style, type FontKey, type MeasuredLabel } from '@mermaid-js/core/text';
-import type { Equipment, PidModel, Port } from './model.js';
+import type { Equipment, PidModel, Port, Stream } from './model.js';
 import { instrumentText, stateText } from './state.js';
 import { splitTag, symbolFor } from './symbols.js';
 
@@ -59,17 +59,35 @@ const vertical = (d: Dir) => d === 'TB' || d === 'BT';
 
 /**
  * Labels go beside the symbol, never where streams come in: under it in a horizontal flow, to its
- * right in a vertical one. A 3-way valve's branch port takes that side, so its labels go opposite.
+ * right in a vertical one.
  */
 function labelSide(dir: Dir, eq: Equipment): LabelSide {
-  if (dir === 'BT' && eq.type === 'valve3') return 'left';
+  // 3-way and relief valves have a branch outlet on the side the labels would otherwise take.
+  const branch = eq.type === 'valve3' || (eq.type === 'valve' && eq.valveKind === 'relief');
+  if (dir === 'BT' && branch) return 'left';
   if (vertical(dir)) return 'right';
-  return eq.type === 'valve3' ? 'above' : 'below';
+  return branch ? 'above' : 'below';
 }
 
 /** The side a control valve's actuator faces: up, or the way a vertical flow turns it. */
 export function actuatorSide(dir: Dir): Side {
   return dir === 'TB' ? 'right' : dir === 'BT' ? 'left' : 'top';
+}
+
+/**
+ * The sides a line must leave and enter by, where the symbol decides: a 3-way valve port, a
+ * relief valve's outlet (the same side as port C), a control valve's actuator.
+ */
+export function endSides(dir: Dir, s: Stream, byId: ReadonlyMap<string, Equipment>): { source?: Side; target?: Side } {
+  const from = byId.get(s.source);
+  const to = byId.get(s.target);
+  const source = s.sourcePort
+    ? portSide(dir, s.sourcePort)
+    : from?.type === 'valve' && from.valveKind === 'relief'
+      ? portSide(dir, 'C')
+      : undefined;
+  const target = s.kind === 'signal' && to?.actuated ? actuatorSide(dir) : s.targetPort ? portSide(dir, s.targetPort) : undefined;
+  return { source, target };
 }
 
 /** The box side each 3-way valve port faces: A upstream, B downstream, C across the flow. */
@@ -149,12 +167,8 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
   const edges: LayoutEdge[] = model.streams.map((s) => {
     const edge: LayoutEdge = { id: s.id, source: s.source, target: s.target, minLen: 1 };
     if (s.arrow) edge.endMarker = ARROW;
-    const actuator = s.kind === 'signal' && byId.get(s.target)?.actuated;
-    if (s.sourcePort || s.targetPort || actuator)
-      edge.sides = {
-        source: s.sourcePort && portSide(model.direction, s.sourcePort),
-        target: actuator ? actuatorSide(model.direction) : s.targetPort && portSide(model.direction, s.targetPort),
-      };
+    const sides = endSides(model.direction, s, byId);
+    if (sides.source || sides.target) edge.sides = sides;
     if (s.label !== undefined) {
       const props = model.properties.get(s.label) ?? [];
       const text = [s.label, ...props.map((p) => (p.key ? `${p.key}: ${p.value}` : p.value))].join('\n');

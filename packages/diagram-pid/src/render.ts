@@ -4,7 +4,7 @@ import type { PathData, SafeValue, SvgWriter } from '@mermaid-js/core/svg';
 import { pathBuilder, px, rotate, styleScope, styleText, themeStyleSheet, transforms, translate } from '@mermaid-js/core/svg';
 import type { MeasuredLabel } from '@mermaid-js/core/text';
 import type { LayoutModelNode, Side } from '@mermaid-js/core/layout';
-import { actuatorSide, ARROW, LABEL_GAP, portSide, type NodePlacement, type PidLayout } from './layout.js';
+import { ARROW, endSides, LABEL_GAP, type NodePlacement, type PidLayout } from './layout.js';
 import type { Equipment, EquipmentType, PidModel, Stream } from './model.js';
 import { portOpen } from './state.js';
 import { symbolFor, type SymbolPart } from './symbols.js';
@@ -57,10 +57,9 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     const edge = layout.edges.get(s.id);
     if (!edge || edge.points.length < 2) continue;
     const pts = edge.points.map((p) => ({ x: p.x, y: p.y }));
-    const target = byId.get(s.target);
-    const toActuator = s.kind === 'signal' && !!target?.actuated;
-    attach(pts, false, layout, byId.get(s.source), s.sourcePort && portSide(model.direction, s.sourcePort));
-    attach(pts, true, layout, target, toActuator ? actuatorSide(model.direction) : s.targetPort && portSide(model.direction, s.targetPort));
+    const sides = endSides(model.direction, s, byId);
+    attach(pts, false, layout, byId.get(s.source), sides.source);
+    attach(pts, true, layout, byId.get(s.target), sides.target);
     const blocked = s.kind === 'process' && isBlocked(s, byId);
     w.open('g', { class: `stream ${s.kind}${blocked ? ' stream-blocked' : ''}`, 'data-id': s.ast });
     w.leaf('path', {
@@ -124,6 +123,10 @@ type Paint = Record<'line' | 'border' | 'bg' | 'text' | 'labelBg', ReturnType<Re
 
 function drawPart(w: SvgWriter, part: SymbolPart, eq: Equipment, look: StateLook, paint: Paint): void {
   const d = part.tag === 'path' ? { d: toPath(String(part.attrs.d)) } : {};
+  if (part.ink) {
+    w.leaf(part.tag, { ...part.attrs, ...d, fill: paint.border, stroke: 'none' });
+    return;
+  }
   // A 3-way valve port is solid when shut; otherwise the whole symbol follows the state look.
   const shut = part.port !== undefined && portOpen(eq, part.port) === false;
   const opacity = !part.fill ? 0 : part.port !== undefined ? (shut ? 1 : 0) : look.fillOpacity;

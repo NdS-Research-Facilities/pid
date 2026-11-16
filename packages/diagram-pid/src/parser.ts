@@ -4,6 +4,7 @@ import type { Dir } from '@mermaid-js/core/layout';
 import {
   EQUIPMENT_TYPES,
   INSTRUMENT_LOCATIONS,
+  VALVE_KINDS,
   type Equipment,
   type EquipmentType,
   type InstrumentLocation,
@@ -11,12 +12,13 @@ import {
   type PidModel,
   type Port,
   type StreamProperty,
+  type ValveKind,
 } from './model.js';
 import { parseState } from './state.js';
 
 const HEADER = /^pid(?:\s+(LR|RL|TB|TD|BT))?\s*$/;
 const TITLE = /^title\s+(.+)$/;
-/** `TAG: type [location] ["Name"] [= state]` */
+/** `TAG: type [variant] ["Name"] [= state]`; the variant is an instrument's location or a valve's kind. */
 const EQUIPMENT = /^([A-Za-z][\w.-]*)\s*:\s*([A-Za-z][A-Za-z0-9]*)(?:\s+([A-Za-z]+))?(?:\s+"([^"]*)")?(?:\s*=\s*(.*))?$/;
 /** `TAG = value`: a state line, kept apart from the drawing so templates touch only these. */
 const STATE = /^([A-Za-z][\w.-]*)\s*=\s*(.*)$/;
@@ -104,17 +106,22 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
         ranges.push({ start, end });
       }
     } else if ((m = EQUIPMENT.exec(line))) {
-      const [, id, type, location, name, state] = m;
+      const [, id, type, variant, name, state] = m;
       const known = (EQUIPMENT_TYPES as readonly string[]).includes(type!.toLowerCase());
       if (!known) error(`Unknown equipment type "${type}". Known: ${EQUIPMENT_TYPES.join(', ')}`, start, end);
       const eq = touch(id!, start, end);
       eq.type = known ? (type!.toLowerCase() as EquipmentType) : 'block';
-      if (location !== undefined) {
-        const loc = location.toLowerCase();
-        if (eq.type !== 'instrument') error(`Only instruments take a location; "${location}" on a ${eq.type}`, start, end);
-        else if (!(INSTRUMENT_LOCATIONS as readonly string[]).includes(loc))
-          error(`Unknown instrument location "${location}". Known: ${INSTRUMENT_LOCATIONS.join(', ')}`, start, end);
-        else eq.location = loc as InstrumentLocation;
+      if (variant !== undefined) {
+        const v = variant.toLowerCase();
+        if (eq.type === 'instrument') {
+          if ((INSTRUMENT_LOCATIONS as readonly string[]).includes(v)) eq.location = v as InstrumentLocation;
+          else error(`Unknown instrument location "${variant}". Known: ${INSTRUMENT_LOCATIONS.join(', ')}`, start, end);
+        } else if (eq.type === 'valve') {
+          if ((VALVE_KINDS as readonly string[]).includes(v)) eq.valveKind = v as ValveKind;
+          else error(`Unknown valve kind "${variant}". Known: ${VALVE_KINDS.join(', ')}`, start, end);
+        } else {
+          error(`Only instruments (location) and valves (kind) take a variant; "${variant}" on a ${eq.type}`, start, end);
+        }
       }
       if (name !== undefined) eq.name = decodeEntities(name);
       if (state !== undefined) eq.state = parseState(decodeEntities(state));
@@ -134,7 +141,7 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
     [s.source, s.sourcePort] = resolve(s.source);
     [s.target, s.targetPort] = resolve(s.target);
     const target = byId.get(s.target);
-    if (s.kind === 'signal' && target?.type === 'valve') target.actuated = true;
+    if (s.kind === 'signal' && target?.type === 'valve' && target.valveKind !== 'relief') target.actuated = true;
   });
 
   const ast: AstNode = { id: 'root', type: 'pid', range: { start: 0, end: text.length }, children };
