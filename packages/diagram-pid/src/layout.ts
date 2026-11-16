@@ -8,6 +8,8 @@ import { splitTag, symbolFor } from './symbols.js';
 export const LABEL_GAP = 6;
 export const ARROW = { length: 8, width: 7 };
 const EDGE_PAD = 4;
+/** Between a line number and the line (or the stream tag box) it labels. */
+export const LINE_NUMBER_GAP = 3;
 const BOX_PAD = 8;
 
 export type LabelSide = 'below' | 'above' | 'left' | 'right';
@@ -38,6 +40,11 @@ export interface NodePlacement {
    * bottom to top (A down, C right). Right to left needs none: the symbols are mirror-symmetric.
    */
   turn: 0 | 90 | -90;
+  /**
+   * A 3-way or relief valve flipped across the flow, so its branch (port C, the relief outlet)
+   * faces the side its line goes to: up instead of down, right instead of left.
+   */
+  mirror?: boolean;
 }
 
 export interface EdgeLabel {
@@ -49,6 +56,8 @@ export interface EdgeLabel {
 export interface PidLayout extends LayoutModel {
   placements: Map<string, NodePlacement>;
   edgeLabels: Map<string, EdgeLabel>;
+  /** Line numbers (`pipe 1 2"-CW-101-A1`) by stream id. */
+  lineNumbers: Map<string, MeasuredLabel>;
   fontSize: number;
 }
 
@@ -61,12 +70,15 @@ const vertical = (d: Dir) => d === 'TB' || d === 'BT';
  * Labels go beside the symbol, never where streams come in: under it in a horizontal flow, to its
  * right in a vertical one.
  */
-function labelSide(dir: Dir, eq: Equipment): LabelSide {
-  // 3-way and relief valves have a branch outlet on the side the labels would otherwise take.
-  const branch = eq.type === 'valve3' || (eq.type === 'valve' && eq.valveKind === 'relief');
-  if (dir === 'BT' && branch) return 'left';
-  if (vertical(dir)) return 'right';
-  return branch ? 'above' : 'below';
+/** A valve with a branch outlet across the flow: 3-way valves' port C, a relief valve's outlet. */
+export const hasBranch = (eq: Equipment) => eq.type === 'valve3' || (eq.type === 'valve' && eq.valveKind === 'relief');
+
+const OPPOSITE: Record<Side, LabelSide> = { top: 'below', bottom: 'above', left: 'right', right: 'left' };
+
+function labelSide(dir: Dir, eq: Equipment, mirror = false): LabelSide {
+  // Labels go opposite a branch outlet, which takes the side they would otherwise use.
+  if (hasBranch(eq)) return OPPOSITE[portSide(dir, 'C', mirror)];
+  return vertical(dir) ? 'right' : 'below';
 }
 
 /** The side a control valve's actuator faces: up, or the way a vertical flow turns it. */
@@ -78,16 +90,38 @@ export function actuatorSide(dir: Dir): Side {
  * The sides a line must leave and enter by, where the symbol decides: a 3-way valve port, a
  * relief valve's outlet (the same side as port C), a control valve's actuator.
  */
-export function endSides(dir: Dir, s: Stream, byId: ReadonlyMap<string, Equipment>): { source?: Side; target?: Side } {
+export function endSides(
+  dir: Dir,
+  s: Stream,
+  byId: ReadonlyMap<string, Equipment>,
+  mirrored: ReadonlySet<string> = new Set(),
+): { source?: Side; target?: Side } {
   const from = byId.get(s.source);
   const to = byId.get(s.target);
   const source = s.sourcePort
-    ? portSide(dir, s.sourcePort)
+    ? portSide(dir, s.sourcePort, mirrored.has(s.source))
     : from?.type === 'valve' && from.valveKind === 'relief'
-      ? portSide(dir, 'C')
+      ? portSide(dir, 'C', mirrored.has(s.source))
       : undefined;
-  const target = s.kind === 'signal' && to?.actuated ? actuatorSide(dir) : s.targetPort ? portSide(dir, s.targetPort) : undefined;
+  const target =
+    s.kind === 'signal' && to?.actuated
+      ? actuatorSide(dir)
+      : s.targetPort
+        ? portSide(dir, s.targetPort, mirrored.has(s.target))
+        : undefined;
   return { source, target };
+}
+
+/**
+ * The lines on a valve's branch (those at its port C, or all lines leaving a relief valve), with
+ * whether the valve is the line's source.
+ */
+function branchLines(model: PidModel, eq: Equipment): { id: string; fromValve: boolean }[] {
+  return model.streams.flatMap((s): { id: string; fromValve: boolean }[] => {
+    if (s.source === eq.id && (s.sourcePort === 'C' || eq.type === 'valve')) return [{ id: s.id, fromValve: true }];
+    if (s.target === eq.id && s.targetPort === 'C') return [{ id: s.id, fromValve: false }];
+    return [];
+  });
 }
 
 /** Lines end in an arrowhead unless they run into a tee, where the pipe just continues. */
@@ -95,15 +129,20 @@ export function drawsArrow(s: Stream, byId: ReadonlyMap<string, Equipment>): boo
   return s.arrow && byId.get(s.target)?.type !== 'tee';
 }
 
-/** The box side each 3-way valve port faces: A upstream, B downstream, C across the flow. */
-export function portSide(dir: Dir, port: Port): Side {
+/**
+ * The box side each 3-way valve port faces: A upstream, B downstream, C across the flow, on the
+ * side the symbol's turn puts it, or the other side when the valve is mirrored.
+ */
+export function portSide(dir: Dir, port: Port, mirror = false): Side {
   const sides: Record<Dir, Record<Port, Side>> = {
     LR: { A: 'left', B: 'right', C: 'bottom' },
     RL: { A: 'right', B: 'left', C: 'bottom' },
     TB: { A: 'top', B: 'bottom', C: 'left' },
     BT: { A: 'bottom', B: 'top', C: 'right' },
   };
-  return sides[dir][port];
+  const side = sides[dir][port];
+  if (!mirror || port !== 'C') return side;
+  return ({ top: 'bottom', bottom: 'top', left: 'right', right: 'left' } as const)[side];
 }
 
 function fontSizeOf(ctx: RenderContext): number {
@@ -177,31 +216,75 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
   });
 
   const edgeLabels = new Map<string, EdgeLabel>();
+  const lineNumbers = new Map<string, MeasuredLabel>();
   const edges: LayoutEdge[] = model.streams.map((s) => {
     const edge: LayoutEdge = { id: s.id, source: s.source, target: s.target, minLen: 1 };
     if (drawsArrow(s, byId)) edge.endMarker = ARROW;
     const sides = endSides(model.direction, s, byId);
     if (sides.source || sides.target) edge.sides = sides;
+    let tag: EdgeLabel | undefined;
     if (s.label !== undefined) {
       const props = model.properties.get(s.label) ?? [];
       const text = [s.label, ...props.map((p) => (p.key ? `${p.key}: ${p.value}` : p.value))].join('\n');
       const box = measure(text, small);
-      const width = Math.ceil(box.width + 2 * EDGE_PAD);
-      const height = Math.ceil(box.height + 2 * EDGE_PAD);
-      edgeLabels.set(s.id, { box, width, height });
-      edge.label = { width, height };
+      tag = { box, width: Math.ceil(box.width + 2 * EDGE_PAD), height: Math.ceil(box.height + 2 * EDGE_PAD) };
+      edgeLabels.set(s.id, tag);
+    }
+    const number = s.lineNumber ? measure(s.lineNumber, { ...small, size: size - 3 }) : undefined;
+    if (number) lineNumbers.set(s.id, number);
+    // The layout keeps the label area clear on the line: the stream tag box centred on it, and
+    // the line number above it, mirrored below so the area stays centred on the line.
+    if (tag || number) {
+      const lift = number ? 2 * (number.height + LINE_NUMBER_GAP) : 0;
+      edge.label = {
+        width: Math.ceil(Math.max(tag?.width ?? 0, (number?.width ?? 0) + 4)),
+        height: Math.ceil((tag?.height ?? 0) + lift),
+      };
     }
     return edge;
   });
 
-  const laid = ctx.layout({
-    direction: model.direction,
-    nodes,
-    edges,
-    groups: [],
-    spacing: { node: 50, rank: 70, edge: 20 },
-    routing: 'stepped',
-    diagramPadding: 12,
-  });
-  return { ...laid, placements, edgeLabels, fontSize: size };
+  const run = () =>
+    ctx.layout({
+      direction: model.direction,
+      nodes,
+      edges,
+      groups: [],
+      spacing: { node: 50, rank: 70, edge: 20 },
+      routing: 'stepped',
+      diagramPadding: 12,
+    });
+  let laid = run();
+
+  // The layout orders nodes without regard to which side a branch must leave by, so a branch
+  // line can have to cross the valve's other lines. Mirror each valve whose branch heads the
+  // other way, and lay out again with the new sides. Boxes are symmetric: sizes do not change.
+  const mirrored = new Set<string>();
+  const across = (p: { x: number; y: number }) => (vertical(model.direction) ? p.x : p.y);
+  for (const eq of model.equipment.filter(hasBranch)) {
+    const node = laid.nodes.get(eq.id);
+    // Where each branch line meets its other end: the side of the valve it has to get to.
+    const ends = branchLines(model, eq).flatMap(({ id, fromValve }) => {
+      const pts = laid.edges.get(id)?.points;
+      return pts?.length ? [fromValve ? pts[pts.length - 1]! : pts[0]!] : [];
+    });
+    if (!node || !ends.length) continue;
+    const pull = ends.reduce((sum, n) => sum + across(n) - across(node), 0) / ends.length;
+    const side = portSide(model.direction, 'C');
+    const sign = side === 'bottom' || side === 'right' ? 1 : -1;
+    if (pull * sign < 0) mirrored.add(eq.id);
+  }
+  if (mirrored.size) {
+    for (const id of mirrored) {
+      const place = placements.get(id)!;
+      place.mirror = true;
+      place.side = labelSide(model.direction, byId.get(id)!, true);
+    }
+    model.streams.forEach((s, k) => {
+      const sides = endSides(model.direction, s, byId, mirrored);
+      edges[k]!.sides = sides.source || sides.target ? sides : undefined;
+    });
+    laid = run();
+  }
+  return { ...laid, placements, edgeLabels, lineNumbers, fontSize: size };
 }

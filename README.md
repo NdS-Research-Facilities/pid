@@ -66,6 +66,20 @@ J-1 --- PT-101
 
 Where two lines cross without a tee, one hops over the other with a small arc.
 
+### Line numbers and line styles
+
+```
+pipe 1 4"-P-101-A1              %% by stream tag
+pipe J-1>V-101 2"-P-104-A1      %% by its ends
+linkStyle 5,6 stroke:#1565c0,stroke-width:2.5px
+linkStyle default stroke-width:2px
+```
+
+`pipe` writes a line number along the pipe, above its stream tag; the layout keeps room for it.
+`linkStyle` works as in Mermaid: lines are numbered from 0 in the order they are written, and
+`default` applies to every line. A line the state shows as blocked stays dashed whatever its
+style.
+
 ![Pump bypass with tees and pipe-mounted instruments](docs/images/junctions.png)
 
 ### Instruments
@@ -219,8 +233,6 @@ Mermaid v13 is alpha; the version is pinned exactly to `13.0.0-alpha.3`.
 
 ### Known issues
 
-- In `TB`/`BT` flows, a line on a 3-way valve's `C` port can be routed from the opposite side
-  and cross other lines.
 - The card has no visual editor and no clickable nodes yet.
 
 ## References

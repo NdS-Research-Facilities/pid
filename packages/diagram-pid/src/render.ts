@@ -7,6 +7,7 @@ import {
   pathBuilder,
   px,
   rotate,
+  scale,
   styleScope,
   styleText,
   themeStyleSheet,
@@ -18,7 +19,7 @@ import {
 import type { MeasuredLabel } from '@mermaid-js/core/text';
 import type { LayoutModelNode, Side } from '@mermaid-js/core/layout';
 import { hopPaths } from '@mermaid-js/core/layout/hops';
-import { ARROW, drawsArrow, endSides, LABEL_GAP, type NodePlacement, type PidLayout } from './layout.js';
+import { ARROW, drawsArrow, endSides, LABEL_GAP, LINE_NUMBER_GAP, type NodePlacement, type PidLayout } from './layout.js';
 import { PORTS, type Equipment, type EquipmentType, type PidModel, type Port, type Stream } from './model.js';
 import { boreProblem, connectedPorts, portOpen } from './state.js';
 import { symbolFor, type SymbolPart } from './symbols.js';
@@ -65,13 +66,14 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
 
   const byId = new Map(model.equipment.map((e) => [e.id, e]));
 
+  const mirrored = new Set([...layout.placements].flatMap(([id, p]) => (p.mirror ? [id] : [])));
   // Streams first, so equipment sits on top of line ends. Their routes are settled before any is
   // drawn, so lines that cross without joining can hop over each other.
   const routes = model.streams.flatMap((s) => {
     const edge = layout.edges.get(s.id);
     if (!edge || edge.points.length < 2) return [];
     const pts = edge.points.map((p) => ({ x: p.x, y: p.y }));
-    const sides = endSides(model.direction, s, byId);
+    const sides = endSides(model.direction, s, byId, mirrored);
     attach(pts, false, layout, byId.get(s.source), sides.source);
     attach(pts, true, layout, byId.get(s.target), sides.target);
     if (byId.get(s.source)?.type === 'tee') bendAtTee(pts, false);
@@ -86,23 +88,35 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
   w.open('g', { class: 'streams' });
   routes.forEach(({ s, edge, pts, d }, i) => {
     const blocked = s.kind === 'process' && isBlocked(s, byId);
+    // linkStyle: `default` first, then the line's own; Mermaid checks every declaration.
+    const decls = [...(model.linkStyleDefault ?? []), ...(s.style ?? [])];
+    const { fill: _fill, stroke, ...lineStyle } = decls.length ? checkStyle(decls, (wn) => ctx.warn(wn)).shape : ({} as Attrs);
+    const ink = (stroke as Paint['line'] | undefined) ?? paint.line;
     w.open('g', { class: `stream ${s.kind}${blocked ? ' stream-blocked' : ''}`, 'data-id': s.ast });
     w.leaf('path', {
       d: hopped[i] ?? d,
       fill: 'none',
-      stroke: paint.line,
+      stroke: ink,
       'stroke-width': WEIGHT[s.kind],
-      'stroke-dasharray': s.kind === 'signal' ? SIGNAL_DASH : blocked ? DASH : undefined,
-      'stroke-opacity': blocked ? 0.55 : undefined,
+      'stroke-dasharray': s.kind === 'signal' ? SIGNAL_DASH : undefined,
+      ...lineStyle,
+      // A blocked line stays dashed and faded whatever its style says: that is live state.
+      ...(blocked ? { 'stroke-dasharray': DASH, 'stroke-opacity': 0.55 } : {}),
     });
     if (drawsArrow(s, byId))
-      w.leaf('path', { d: arrowHead(pts[pts.length - 2]!, pts[pts.length - 1]!), fill: paint.line, stroke: 'none' });
+      w.leaf('path', { d: arrowHead(pts[pts.length - 2]!, pts[pts.length - 1]!), fill: ink, stroke: 'none' });
+    const number = layout.lineNumbers.get(s.id);
+    if (number) {
+      const at = edge.label ? onRoute(edge.label, pts) : longestMiddle(pts);
+      drawLineNumber(w, number, pts, at, layout.edgeLabels.get(s.id), ink, layout.fontSize - 3);
+    }
     const lbl = layout.edgeLabels.get(s.id);
     if (lbl && edge.label) {
+      const at = onRoute(edge.label, pts);
       w.leaf('rect', {
         class: 'stream-label',
-        x: r(edge.label.x - lbl.width / 2),
-        y: r(edge.label.y - lbl.height / 2),
+        x: r(at.x - lbl.width / 2),
+        y: r(at.y - lbl.height / 2),
         width: lbl.width,
         height: lbl.height,
         rx: 3,
@@ -110,7 +124,7 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
         stroke: paint.border,
         'stroke-width': 0.8,
       });
-      w.label(lbl.box, edge.label.x, edge.label.y, { fill: paint.text, 'font-size': layout.fontSize - 2 });
+      w.label(lbl.box, at.x, at.y, { fill: paint.text, 'font-size': layout.fontSize - 2 });
     }
     w.close();
   });
@@ -128,14 +142,14 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     const styled = styleFor(eq, model, paint, ctx);
     const classes = ['equipment', eq.type, ...look.classes, ...(eq.classes ?? []).map((c) => `class-${c}`)];
     w.open('g', { class: classes.join(' '), 'data-id': eq.ast });
-    w.open('g', {
-      transform:
-        place.turn === 90
-          ? transforms(translate(r(left + place.width), r(top)), rotate(90))
-          : place.turn === -90
-            ? transforms(translate(r(left), r(top + place.height)), rotate(-90))
-            : translate(r(left), r(top)),
-    });
+    const turned =
+      place.turn === 90
+        ? transforms(translate(r(left + place.width), r(top)), rotate(90))
+        : place.turn === -90
+          ? transforms(translate(r(left), r(top + place.height)), rotate(-90))
+          : translate(r(left), r(top));
+    // Mirroring flips the symbol across the flow, in its own coordinates (before the turn).
+    w.open('g', { transform: place.mirror ? transforms(turned, translate(0, sym.height), scale(1, -1)) : turned });
     if (eq.image || eq.icon) drawCustom(w, eq, place, look, styled, ctx);
     for (const part of sym.parts) drawPart(w, part, eq, look, styled.paint, styled.shape);
     if (eq.type === 'valve3') drawBore(w, eq, styled.paint);
@@ -362,6 +376,59 @@ function bendAtTee(pts: Point[], atEnd: boolean): void {
     b.y = tee.y;
     c.y = tee.y;
   }
+}
+
+/**
+ * A line number, P&ID style, where the layout kept room for it: above the stream tag box (or the
+ * line) on a horizontal run, beside it on a vertical one.
+ */
+function drawLineNumber(
+  w: SvgWriter,
+  label: MeasuredLabel,
+  pts: readonly Point[],
+  at: Point,
+  tag: { width: number; height: number } | undefined,
+  ink: Attrs['fill'],
+  fontSize: number,
+): void {
+  let vertical = false;
+  for (let k = 0; k + 1 < pts.length; k++)
+    if (toSegment(at, pts[k]!, pts[k + 1]!) < 2) {
+      vertical = Math.abs(pts[k]!.x - pts[k + 1]!.x) < 0.5;
+      break;
+    }
+  const attrs = { class: 'line-number', fill: ink, 'font-size': fontSize };
+  if (vertical) w.label(label, at.x + (tag?.width ?? 0) / 2 + LINE_NUMBER_GAP + label.width / 2, at.y, attrs);
+  else w.label(label, at.x, at.y - (tag?.height ?? 0) / 2 - LINE_NUMBER_GAP - label.height / 2, attrs);
+}
+
+/** The middle of the longest straight run of `pts`. */
+function longestMiddle(pts: readonly Point[]): Point {
+  let best = 0;
+  let longest = -1;
+  for (let k = 0; k + 1 < pts.length; k++) {
+    const len = Math.hypot(pts[k + 1]!.x - pts[k]!.x, pts[k + 1]!.y - pts[k]!.y);
+    if (len > longest) [best, longest] = [k, len];
+  }
+  return { x: (pts[best]!.x + pts[best + 1]!.x) / 2, y: (pts[best]!.y + pts[best + 1]!.y) / 2 };
+}
+
+/** Distance from `p` to the segment `a`–`b`. */
+function toSegment(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const t = dx || dy ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy))) : 0;
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+/**
+ * Where a stream label goes: where the layout put it when that is on the drawn route, else the
+ * middle of the route's longest straight run. The layout can place a label for a route it then
+ * changed (a forced port side), which would leave it floating beside the diagram.
+ */
+function onRoute(label: Point, pts: readonly Point[]): Point {
+  for (let k = 0; k + 1 < pts.length; k++) if (toSegment(label, pts[k]!, pts[k + 1]!) < 2) return label;
+  return longestMiddle(pts);
 }
 
 /** Drops points that repeat the one before them. */

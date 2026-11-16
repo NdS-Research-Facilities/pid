@@ -32,6 +32,9 @@ const ICON = /^icon\s+([A-Za-z][\w.-]*)\s+([a-z0-9-]+:[a-z0-9-]+)(?:\s+(\d+))?$/
 /** Default and largest size of a custom image or icon, px. */
 const IMAGE_SIZE = 48;
 const IMAGE_MAX = 240;
+const LINK_STYLE = /^linkStyle\s+(default|\d+(?:\s*,\s*\d+)*)\s+(.+)$/;
+/** `pipe <stream tag | A>B> <line number>`: the rest of the line is the number, quotes included. */
+const PIPE = /^pipe\s+(\S+)\s+(.+)$/;
 const STREAM_PROPS = /^stream\s+("[^"]*"|[^\s{]+)\s*\{(.*)\}$/;
 const ID = /^[A-Za-z][\w.-]*$/;
 /** A line operator with an optional `|label|` straight after it. */
@@ -68,6 +71,9 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
   };
 
   const ranges: { start: number; end: number }[] = [];
+  // linkStyle and pipe can name lines declared after them: applied once every line is read.
+  const linkStyles: { refs: string; decls: string[]; start: number; end: number }[] = [];
+  const pipes: { ref: string; number: string; start: number; end: number }[] = [];
   let offset = ctx?.preprocessed.bodyStart ?? 0;
   let sawHeader = false;
   for (const raw of text.slice(offset).split('\n')) {
@@ -92,7 +98,13 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
 
     let m: RegExpExecArray | null;
     const size = (v: string | undefined, fallback: number) => Math.min(IMAGE_MAX, Math.max(8, v ? Number(v) : fallback));
-    if ((m = CLASSDEF.exec(line))) {
+    if ((m = LINK_STYLE.exec(line))) {
+      linkStyles.push({ refs: m[1]!, decls: declarations(m[2]!), start, end });
+      continue;
+    } else if ((m = PIPE.exec(line))) {
+      pipes.push({ ref: decodeEntities(m[1]!), number: decodeEntities(m[2]!.trim()), start, end });
+      continue;
+    } else if ((m = CLASSDEF.exec(line))) {
       for (const name of m[1]!.split(',')) model.classDefs.set(name.trim(), declarations(m[2]!));
       continue;
     } else if ((m = CLASS.exec(line))) {
@@ -176,6 +188,26 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
     const target = byId.get(s.target);
     if (s.kind === 'signal' && target?.type === 'valve' && target.valveKind !== 'relief') target.actuated = true;
   });
+
+  for (const ls of linkStyles) {
+    if (ls.refs === 'default') {
+      model.linkStyleDefault = [...(model.linkStyleDefault ?? []), ...ls.decls];
+      continue;
+    }
+    for (const i of ls.refs.split(',').map(Number)) {
+      const s = model.streams[i];
+      if (s) s.style = [...(s.style ?? []), ...ls.decls];
+      else error(`linkStyle ${i}: there are ${model.streams.length} lines, numbered from 0`, ls.start, ls.end);
+    }
+  }
+  for (const p of pipes) {
+    const ends = /^(.+)>(.+)$/.exec(p.ref);
+    const matches = model.streams.filter((s) =>
+      ends ? s.source === ends[1] && s.target === ends[2] : s.label === p.ref,
+    );
+    if (!matches.length) error(`pipe ${p.ref}: no line with stream tag "${p.ref}" or ends "A>B"`, p.start, p.end);
+    for (const s of matches) s.lineNumber = p.number;
+  }
 
   const ast: AstNode = { id: 'root', type: 'pid', range: { start: 0, end: text.length }, children };
   return { model, ast, diagnostics, symbols: [], statements: [] };

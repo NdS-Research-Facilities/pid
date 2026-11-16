@@ -160,6 +160,31 @@ describe('custom styling', () => {
   });
 });
 
+describe('line styles and numbers', () => {
+  it('styles lines by index or default, and numbers them by tag or ends', () => {
+    const { model, diagnostics } = parsePid(read('junctions.mmd') + '\n  linkStyle default stroke-dasharray:2 2\n');
+    expect(diagnostics).toEqual([]);
+    expect(model.streams[5]!.style).toEqual(['stroke:#1565c0', 'stroke-width:2.5px']);
+    expect(model.streams[6]!.style).toEqual(['stroke:#1565c0', 'stroke-width:2.5px']);
+    expect(model.linkStyleDefault).toEqual(['stroke-dasharray:2 2']);
+    const numbered = Object.fromEntries(model.streams.filter((s) => s.lineNumber).map((s) => [`${s.source}>${s.target}`, s.lineNumber]));
+    expect(numbered).toEqual({
+      'T-101>P-101': '4"-P-101-A1',
+      'P-101>J-1': '3"-P-102-A1',
+      'J-1>V-101': '2"-P-104-A1',
+      'E-101>D-1': '3"-P-103-A1',
+    });
+  });
+
+  it('reports lines that do not exist', () => {
+    const { diagnostics } = parsePid('pid\n  A --> B\n  linkStyle 3 stroke:#f00\n  pipe 9 1"-X\n');
+    expect(diagnostics.map((d) => d.message)).toEqual([
+      expect.stringContaining('linkStyle 3: there are 1 lines'),
+      expect.stringContaining('pipe 9: no line'),
+    ]);
+  });
+});
+
 describe('Mermaid v13 integration', () => {
   it('detects and renders a pid to SVG', async () => {
     const mermaid = createMermaid();
@@ -194,6 +219,9 @@ describe('Mermaid v13 integration', () => {
         expect(svg.match(/class="custom-icon"/g)).toHaveLength(2);
       }
       if (file === 'junctions.mmd') {
+        expect(svg.match(/class="line-number"/g)).toHaveLength(4);
+        expect(svg).toContain('4&quot;-P-101-A1');
+        expect(svg).toContain('stroke="#1565c0"');
         expect(svg.match(/class="equipment tee"/g)).toHaveLength(3);
         // Tees carry no labels, and lines into a tee have no arrowhead: 13 lines, 8 arrowheads
         // (3 into tees, 2 instrument connections without one).

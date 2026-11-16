@@ -98,6 +98,10 @@ export interface Stream {
   targetPort?: Port;
   /** The stream tag shown on the line, e.g. `1`. */
   label?: string;
+  /** `pipe 1 2"-CW-101-A1`: the line number written along the pipe. */
+  lineNumber?: string;
+  /** `linkStyle 3 stroke:#c00`: style declarations as written. */
+  style?: string[];
   ast: string;
 }
 
@@ -111,4 +115,6 @@ export interface PidModel {
   properties: Map<string, StreamProperty[]>;
   /** `classDef name decl,decl`: style declarations by class name. */
   classDefs: Map<string, string[]>;
+  /** `linkStyle default decl,decl`: applied to every line before its own `linkStyle`. */
+  linkStyleDefault?: string[];
 }
