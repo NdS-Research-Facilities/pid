@@ -1,5 +1,7 @@
 import { icons } from '@mermaid-js/plugin-icons';
-import { createMermaid } from 'mermaid';
+// Mermaid's slim build: its engine without diagram types. This card registers only `pid`, which
+// keeps the bundle small; other Mermaid diagrams belong in a general Mermaid card.
+import { createMermaid } from 'mermaid/slim';
 import { pid } from '@nds/diagram-pid';
 import { resolveActions, type ActionConfig } from './actions.js';
 import './editor.js';
@@ -88,8 +90,8 @@ function fetchPack(url: string): Promise<unknown> {
 }
 
 /**
- * `custom:pid-card`: renders Mermaid v13 diagrams, `pid` P&IDs included, and re-renders when an
- * entity the diagram's templates read changes.
+ * `custom:pid-card`: renders `pid` P&ID diagrams with Mermaid v13, and re-renders when an entity
+ * the diagram's templates read changes. Other Mermaid diagram types are not included.
  */
 export class PidCard extends HTMLElement {
   private config?: PidCardConfig;
@@ -189,6 +191,7 @@ export class PidCard extends HTMLElement {
 
   private instance(): Promise<Mermaid> {
     this.mermaid ??= (async () => {
+      // No first-party diagrams: `pid` (and the icons plugin) are registered as external ones.
       const mermaid = createMermaid();
       await mermaid.registerExternalDiagrams([pid, icons]);
       const urls = { ...DEFAULT_ICON_PACKS, ...(this.config?.icon_packs ?? {}) };
@@ -261,10 +264,17 @@ export class PidCard extends HTMLElement {
 const actionsOf = (config: PidCardConfig): Map<string, ActionConfig> =>
   resolveActions(config.content, config.actions, config.auto_more_info !== false);
 
+/** Shown for any diagram text that is not a `pid` diagram. */
+export const ONLY_PID =
+  'This card draws P&ID diagrams only: the text must start with "pid" (e.g. "pid LR"). ' +
+  'Flowcharts, sequence diagrams and other Mermaid diagram types are not included in this card; ' +
+  'use a general Mermaid card, such as ha-mermaid, for those.';
+
 /** A Mermaid error as one readable line, with its position when Mermaid gives one. */
 export function describeError(err: unknown): string {
   if (!(err instanceof Error)) return String(err);
-  const e = err as Error & { line?: number; column?: number };
+  const e = err as Error & { line?: number; column?: number; code?: string };
+  if (e.code === 'UNSUPPORTED_DIAGRAM') return ONLY_PID;
   const at = typeof e.line === 'number' && e.line > 0 ? ` (line ${e.line}${e.column ? `, column ${e.column}` : ''})` : '';
   return `${e.message}${at}`;
 }
@@ -281,7 +291,7 @@ if (!customElements.get(CARD_TYPE)) {
   window.customCards.push({
     type: CARD_TYPE,
     name: 'P&ID card (Mermaid v13)',
-    description: 'Mermaid v13 diagrams and P&IDs with live entity values',
+    description: 'P&ID diagrams (pid) with live entity values. P&IDs only: other Mermaid diagram types are not included.',
     preview: true,
     documentationURL: 'https://github.com/NdS-Research-Facilities/pid',
   });

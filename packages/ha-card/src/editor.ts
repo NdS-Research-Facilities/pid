@@ -34,7 +34,7 @@ export const EDITOR_SCHEMA = [
 
 const LABELS: Record<string, string> = {
   title: 'Title',
-  content: 'Diagram (Mermaid / pid, with ${…} templates)',
+  content: 'P&ID diagram (starts with "pid"; other Mermaid diagram types are not supported)',
   theme: 'Theme',
   card_size: 'Card size',
   numeric_fallback: 'Numeric fallback',

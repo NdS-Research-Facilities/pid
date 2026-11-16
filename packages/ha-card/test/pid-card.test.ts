@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';
-import { PidCard } from '../src/pid-card.js';
+import { ONLY_PID, PidCard } from '../src/pid-card.js';
 import type { HomeAssistant, HassEntity } from '../src/types.js';
 
 const entity = (entity_id: string, state: string, attributes: Record<string, unknown> = {}, t = '2026-11-16T10:00:00Z'): HassEntity => ({
@@ -91,12 +91,15 @@ describe('pid-card', () => {
     expect(svg()).toContain('state-unknown');
   });
 
-  it('renders ordinary Mermaid diagrams too', async () => {
-    const { card, rendered, svg } = mount({ content: 'flowchart LR\n  A[Pump ${states[\'switch.pump\']}] --> B' });
+  it('draws P&IDs only, and says so for other Mermaid diagrams', async () => {
+    const { card, rendered, svg, error } = mount({ content: 'flowchart LR\n  A[Pump ${states[\'switch.pump\']}] --> B' });
     const done = rendered();
     card.hass = hass([entity('switch.pump', 'on')]);
     await done;
-    expect(svg()).toContain('Pump on');
+    expect(svg()).toBe('');
+    expect(error().hidden).toBe(false);
+    expect(error().textContent).toBe(ONLY_PID);
+    expect(ONLY_PID).toMatch(/P&ID diagrams only/);
   });
 
   it('keeps the last drawing and reports syntax errors', async () => {

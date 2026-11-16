@@ -4,6 +4,13 @@
 [![CI](https://github.com/NdS-Research-Facilities/pid/actions/workflows/ci.yml/badge.svg)](https://github.com/NdS-Research-Facilities/pid/actions/workflows/ci.yml)
 [![Marketplace (formerly known as HACS) validation](https://github.com/NdS-Research-Facilities/pid/actions/workflows/marketplace.yml/badge.svg)](https://github.com/NdS-Research-Facilities/pid/actions/workflows/marketplace.yml)
 
+> [!IMPORTANT]
+> **The Home Assistant card (`custom:pid-card`) draws P&ID diagrams only.** Its diagram text
+> must start with `pid` (for example `pid LR`). Flowcharts, sequence diagrams, Gantt charts and
+> every other Mermaid diagram type are **not included** in this card and show an error. Use a
+> general Mermaid card, such as [ha-mermaid](https://github.com/pajew-ski/ha-mermaid), for those;
+> both cards can be used on the same dashboard.
+
 Declarative piping and instrumentation diagrams (P&IDs) for
 [Mermaid v13](https://mermaid.js.org/intro/v13-alpha.html), with live values from Home Assistant.
 
@@ -201,8 +208,15 @@ written; the card option `image_base` changes the folder.
 ## Home Assistant card
 
 `custom:pid-card` (in `packages/ha-card`) is a Lovelace card built on Mermaid v13 with the P&ID
-plugin included. It renders `pid` diagrams and every other Mermaid diagram type, and re-renders
-when an entity its templates read changes.
+plugin included. It re-renders when an entity its templates read changes.
+
+> [!WARNING]
+> **P&IDs only.** This card contains Mermaid's engine and the `pid` diagram type, nothing else.
+> Diagram text that does not start with `pid` (a `flowchart`, `sequenceDiagram`, `gantt`, …) is
+> not drawn; the card shows *"This card draws P&ID diagrams only"* instead. For other Mermaid
+> diagrams use a general Mermaid card such as [ha-mermaid](https://github.com/pajew-ski/ha-mermaid).
+> Leaving the other diagram types out keeps the card small: about 470 kB (180 kB gzipped)
+> instead of 2.2 MB.
 
 ```yaml
 type: custom:pid-card
@@ -284,7 +298,8 @@ with type *Dashboard*, then download *P&ID card (Mermaid v13)* and reload the br
 Marketplace (formerly known as HACS) installs the `pid-card.js` attached to the latest GitHub
 release; CI builds and attaches it when a `v*` tag is pushed.
 
-The bundle is about 2.1 MB (0.8 MB gzipped), because it carries all of Mermaid v13.
+The bundle is about 470 kB (180 kB gzipped): Mermaid v13's engine with only the `pid` diagram
+type and the icons plugin.
 
 ## Usage
 
