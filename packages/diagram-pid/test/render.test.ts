@@ -213,6 +213,7 @@ describe('all-capabilities example', () => {
     expect(model.streams[13]).toMatchObject({ source: 'HP-1', target: 'E-101' });
     expect(eq.find((e) => e.id === 'AT-106')?.name).toBe('pH (outlet)');
     expect(eq.some((e) => e.gradient) && eq.some((e) => e.level)).toBe(true);
+    expect(eq.some((e) => e.coils) && model.streams.some((s) => s.targetCoil !== undefined) && eq.some((e) => e.size)).toBe(true);
   });
 });
 
@@ -237,6 +238,43 @@ describe('solar and electrical', () => {
   it('shows a number on other equipment as written, not as a valve position', () => {
     const { model } = parsePid('pid\n  PV-1: pv = 3.4\n');
     expect(model.equipment[0]!.state?.kind).toBe('position');
+  });
+});
+
+describe('coils and size', () => {
+  it('reads coils, their heights, walls and names, and lines to them', () => {
+    const { model, diagnostics } = parsePid(read('coils.mmd'));
+    expect(diagnostics).toEqual([]);
+    const t = model.equipment.find((e) => e.id === 'T-1')!;
+    expect(t.coils).toEqual([
+      { height: 0.2, name: 'Solar coil' },
+      { height: 0.5, name: 'Heat pump coil' },
+      { height: 0.8, side: 'right', name: 'Hot water coil' },
+    ]);
+    const at = (s: { source: string; sourceCoil?: number; target: string; targetCoil?: number }) =>
+      `${s.source}${s.sourceCoil !== undefined ? `.coil${s.sourceCoil + 1}` : ''}>${s.target}${s.targetCoil !== undefined ? `.coil${s.targetCoil + 1}` : ''}`;
+    expect(model.streams.map(at)).toEqual(['SC-1>P-1', 'P-1>T-1.coil1', 'T-1.coil1>R-1', 'HP-1>T-1.coil2', 'T-1.coil2>R-2', 'F-1>T-1.coil3', 'T-1.coil3>D-1']);
+    expect(model.equipment.some((e) => e.id.includes('.coil'))).toBe(false);
+    expect(parsePid('pid\n  T: tank\n  coil T @35%\n').model.equipment[0]!.coils).toEqual([{ height: 0.35 }]);
+  });
+
+  it('reports coils that do not exist or cannot be', () => {
+    const msgs = parsePid('pid\n  T: tank\n  P: pump\n  coil T bottom\n  coil P top\n  X --> T.coil2\n  size T 9\n').diagnostics.map((d) => d.message);
+    expect(msgs).toEqual([
+      expect.stringContaining('size T 9: use a factor from 0.5 to 3'),
+      expect.stringContaining('T has 1 coil: there is no coil2'),
+      expect.stringContaining('P is a pump: coils go in tank, vessel, drum, column, reactor'),
+    ]);
+  });
+
+  it('grows vessels with coils, and takes size', async () => {
+    const { scaleOf } = await import('../src/symbols.js');
+    const eq = (src: string) => parsePid(`pid\n  T: tank\n${src}`).model.equipment[0]!;
+    expect(scaleOf(eq(''))).toBe(1);
+    expect(scaleOf(eq('  coil T top\n'))).toBe(1.25);
+    expect(scaleOf(eq('  coil T top\n  coil T bottom\n'))).toBe(1.5);
+    expect(scaleOf(eq('  coil T top\n  coil T middle\n  coil T bottom\n'))).toBe(1.8);
+    expect(scaleOf(eq('  coil T top\n  size T 2.2\n'))).toBe(2.2);
   });
 });
 
@@ -315,6 +353,16 @@ describe('Mermaid v13 integration', () => {
         expect(psvLines).toHaveLength(2);
         expect(psvLines.join('')).not.toContain('stream-blocked');
         expect(svg).toMatch(/class="equipment valve state-closed"/);
+      }
+      if (file === 'home-heating.mmd') {
+        // The translated drawing: three coils, the PV cable kept orange under the blue default.
+        expect(svg.match(/class="coil coil\d"/g)).toHaveLength(3);
+        expect(svg).toMatch(/class="stream electric"[^>]*>\s*<path[^>]*stroke="#ef6c00"/);
+      }
+      if (file === 'coils.mmd') {
+        expect(svg.match(/class="coil coil\d"/g)).toHaveLength(3);
+        expect(svg).toContain('<title>Solar coil</title>');
+        expect(svg).toContain('scale(1.8,1.8)');
       }
       if (file === 'solar.mmd') {
         expect(svg.match(/class="stream electric/g)).toHaveLength(9);

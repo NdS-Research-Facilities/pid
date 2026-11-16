@@ -3,7 +3,7 @@ import type { Dir, LayoutEdge, LayoutModel, LayoutNode, Side } from '@mermaid-js
 import { layoutLabel, Style, type FontKey, type MeasuredLabel } from '@mermaid-js/core/text';
 import type { Equipment, PidModel, Port, Stream } from './model.js';
 import { equipmentStateText, instrumentText } from './state.js';
-import { splitTag, symbolFor } from './symbols.js';
+import { scaleOf, splitTag, symbolFor } from './symbols.js';
 
 export const LABEL_GAP = 6;
 export const ARROW = { length: 8, width: 7 };
@@ -40,6 +40,8 @@ export interface NodePlacement {
    * bottom to top (A down, C right). Right to left needs none: the symbols are mirror-symmetric.
    */
   turn: 0 | 90 | -90;
+  /** The symbol's scale (`size`, or grown for coils); `width` and `height` include it. */
+  scale: number;
   /**
    * A 3-way or relief valve flipped across the flow, so its branch (port C, the relief outlet)
    * faces the side its line goes to: up instead of down, right instead of left.
@@ -62,6 +64,8 @@ export interface PidLayout extends LayoutModel {
   fillMarks: Map<string, { stops: (MeasuredLabel | undefined)[]; level?: MeasuredLabel }>;
   /** The font size of those readings. */
   markSize: number;
+  /** The wall each coil's nozzles are on, by `coilKey`. */
+  coilSides: Map<string, 'left' | 'right'>;
   fontSize: number;
 }
 
@@ -92,6 +96,9 @@ export function actuatorSide(dir: Dir): Side {
   return dir === 'TB' ? 'right' : dir === 'BT' ? 'left' : 'top';
 }
 
+/** A coil nozzle's key in `PidLayout.coilSides`. */
+export const coilKey = (id: string, i: number, end: 'in' | 'out') => `${id}#${i}#${end}`;
+
 /**
  * The sides a line must leave and enter by, where the symbol decides: a 3-way valve port, a
  * relief valve's outlet (the same side as port C), a control valve's actuator.
@@ -101,9 +108,19 @@ export function endSides(
   s: Stream,
   byId: ReadonlyMap<string, Equipment>,
   mirrored: ReadonlySet<string> = new Set(),
+  coilSides: ReadonlyMap<string, 'left' | 'right'> = new Map(),
 ): { source?: Side; target?: Side } {
   const from = byId.get(s.source);
   const to = byId.get(s.target);
+  const coil = (id: string, i: number | undefined, end: 'in' | 'out') =>
+    i === undefined ? undefined : (coilSides.get(coilKey(id, i, end)) ?? byId.get(id)?.coils?.[i]?.side);
+  // A line leaves a coil by its outlet and reaches it by its inlet.
+  const sourceCoil = coil(s.source, s.sourceCoil, 'out');
+  const targetCoil = coil(s.target, s.targetCoil, 'in');
+  if (sourceCoil || targetCoil || s.sourceCoil !== undefined || s.targetCoil !== undefined) {
+    const rest = endSides(dir, { ...s, sourceCoil: undefined, targetCoil: undefined }, byId, mirrored);
+    return { source: s.sourceCoil !== undefined ? sourceCoil : rest.source, target: s.targetCoil !== undefined ? targetCoil : rest.target };
+  }
   const source = s.sourcePort
     ? portSide(dir, s.sourcePort, mirrored.has(s.source))
     : from?.type === 'valve' && from.valveKind === 'relief'
@@ -180,7 +197,7 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
     const tee = eq.type === 'tee';
     if (tee) {
       // A tee is a point on the pipe: no labels, and a box no larger than its dot.
-      placements.set(eq.id, { labels: { width: 0, height: 0 }, side: 'below', width: sym.width, height: sym.height, turn: 0 });
+      placements.set(eq.id, { labels: { width: 0, height: 0 }, side: 'below', width: sym.width, height: sym.height, turn: 0, scale: 1 });
       return { id: eq.id, width: sym.width, height: sym.height, shape: eq.type };
     }
     const tag = inBubble ? undefined : measure(eq.id, font, Style.Bold);
@@ -206,10 +223,11 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
       height: lines.reduce((h, l) => h + l.height, 0),
     };
     const turn = !sym.turns || !vertical(model.direction) ? 0 : model.direction === 'TB' ? 90 : -90;
-    const w = turn ? sym.height : sym.width;
-    const h = turn ? sym.width : sym.height;
+    const f = scaleOf(eq);
+    const w = (turn ? sym.height : sym.width) * f;
+    const h = (turn ? sym.width : sym.height) * f;
     const side = labelSide(model.direction, eq);
-    placements.set(eq.id, { labels, side, width: w, height: h, turn });
+    placements.set(eq.id, { labels, side, width: w, height: h, turn, scale: f });
     // The symbol sits in the middle of the box, so streams attach at its centre line; the space
     // the labels take on one side is mirrored on the other.
     const across = side === 'left' || side === 'right';
@@ -280,14 +298,44 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
     const sign = side === 'bottom' || side === 'right' ? 1 : -1;
     if (pull * sign < 0) mirrored.add(eq.id);
   }
-  if (mirrored.size) {
+  // Each coil nozzle goes on the wall facing the line it carries (inlet: the line coming in,
+  // outlet: the line going out), unless the diagram names the wall for the whole coil.
+  const coilSides = new Map<string, 'left' | 'right'>();
+  for (const eq of model.equipment) {
+    const node = laid.nodes.get(eq.id);
+    eq.coils?.forEach((coil, i) => {
+      if (coil.side) {
+        coilSides.set(coilKey(eq.id, i, 'in'), coil.side);
+        coilSides.set(coilKey(eq.id, i, 'out'), coil.side);
+        return;
+      }
+      const sideOf = (end: 'in' | 'out') => {
+        const ends = model.streams.flatMap((s) => {
+          const pts = laid.edges.get(s.id)?.points;
+          if (!pts?.length) return [];
+          if (end === 'out' && s.source === eq.id && s.sourceCoil === i) return [pts[pts.length - 1]!];
+          if (end === 'in' && s.target === eq.id && s.targetCoil === i) return [pts[0]!];
+          return [];
+        });
+        if (!node || !ends.length) return undefined;
+        return ends.reduce((sum, p) => sum + p.x - node.x, 0) / ends.length > 0 ? ('right' as const) : ('left' as const);
+      };
+      const inlet = sideOf('in');
+      const outlet = sideOf('out');
+      // A nozzle without a line goes on the other one's wall.
+      coilSides.set(coilKey(eq.id, i, 'in'), inlet ?? outlet ?? 'left');
+      coilSides.set(coilKey(eq.id, i, 'out'), outlet ?? inlet ?? 'left');
+    });
+  }
+  const coilLines = model.streams.some((s) => s.sourceCoil !== undefined || s.targetCoil !== undefined);
+  if (mirrored.size || coilLines) {
     for (const id of mirrored) {
       const place = placements.get(id)!;
       place.mirror = true;
       place.side = labelSide(model.direction, byId.get(id)!, true);
     }
     model.streams.forEach((s, k) => {
-      const sides = endSides(model.direction, s, byId, mirrored);
+      const sides = endSides(model.direction, s, byId, mirrored, coilSides);
       edges[k]!.sides = sides.source || sides.target ? sides : undefined;
     });
     laid = run();
@@ -303,5 +351,5 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
         level: eq.level ? measure(eq.level.percent === undefined ? '?' : `${round1(eq.level.percent)} %`, markFont) : undefined,
       });
     }
-  return { ...laid, placements, edgeLabels, lineNumbers, fillMarks, markSize, fontSize: size };
+  return { ...laid, placements, edgeLabels, lineNumbers, fillMarks, markSize, coilSides, fontSize: size };
 }

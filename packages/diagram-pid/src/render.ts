@@ -20,10 +20,10 @@ import {
 import type { MeasuredLabel } from '@mermaid-js/core/text';
 import type { LayoutModelNode, Side } from '@mermaid-js/core/layout';
 import { hopPaths } from '@mermaid-js/core/layout/hops';
-import { ARROW, drawsArrow, endSides, LABEL_GAP, LINE_NUMBER_GAP, type NodePlacement, type PidLayout } from './layout.js';
+import { ARROW, coilKey, drawsArrow, endSides, LABEL_GAP, LINE_NUMBER_GAP, type NodePlacement, type PidLayout } from './layout.js';
 import { PORTS, type Equipment, type EquipmentType, type PidModel, type Port, type Stream } from './model.js';
 import { boreProblem, breakerClosed, connectedPorts, portOpen } from './state.js';
-import { interiorOf, symbolFor, type Interior, type SymbolDef, type SymbolPart } from './symbols.js';
+import { coilShape, interiorOf, symbolFor, type Interior, type SymbolDef, type SymbolPart } from './symbols.js';
 
 const DASH = '4 3' as SafeValue;
 const SIGNAL_DASH = '7 3' as SafeValue;
@@ -76,9 +76,9 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     const edge = layout.edges.get(s.id);
     if (!edge || edge.points.length < 2) return [];
     const pts = edge.points.map((p) => ({ x: p.x, y: p.y }));
-    const sides = endSides(model.direction, s, byId, mirrored);
-    attach(pts, false, layout, byId.get(s.source), sides.source);
-    attach(pts, true, layout, byId.get(s.target), sides.target);
+    const sides = endSides(model.direction, s, byId, mirrored, layout.coilSides);
+    attach(pts, false, layout, byId.get(s.source), sides.source, coilNozzle(layout, byId.get(s.source), s.sourceCoil, 'outlet'));
+    attach(pts, true, layout, byId.get(s.target), sides.target, coilNozzle(layout, byId.get(s.target), s.targetCoil, 'inlet'));
     const others = [...layout.nodes].filter(([id]) => id !== s.source && id !== s.target).map(([, n]) => n);
     if (byId.get(s.source)?.type === 'tee') bendAtTee(pts, false, others);
     if (byId.get(s.target)?.type === 'tee') bendAtTee(pts, true, others);
@@ -159,15 +159,18 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
         : place.turn === -90
           ? transforms(translate(r(left), r(top + place.height)), rotate(-90))
           : translate(r(left), r(top));
-    // Mirroring flips the symbol across the flow, in its own coordinates (before the turn).
-    w.open('g', { transform: place.mirror ? transforms(turned, translate(0, sym.height), scale(1, -1)) : turned });
+    // Then the symbol's scale, and mirroring across the flow, both in its own coordinates.
+    const scaled = place.scale !== 1 ? transforms(turned, scale(place.scale)) : turned;
+    w.open('g', { transform: place.mirror ? transforms(scaled, translate(0, sym.height), scale(1, -1)) : scaled });
     if (eq.image || eq.icon) drawCustom(w, eq, place, look, styled, ctx);
-    for (const part of sym.parts) drawPart(w, part, eq, look, styled.paint, styled.shape);
+    for (const part of sym.parts) drawPart(w, part, eq, look, styled.paint, styled.shape, place.scale);
     const inside = (eq.gradient || eq.level) && interiorOf(eq.type);
-    if (inside) drawFill(w, eq, inside, sym, model, layout, styled, ctx);
+    const fillMarks = inside ? drawFill(w, eq, inside, sym, model, layout, styled, ctx, { x: left, y: top }, place.scale) : undefined;
+    if (eq.coils) drawCoils(w, eq, layout, styled.paint, place.scale);
     if (eq.type === 'valve3') drawBore(w, eq, styled.paint);
     if (eq.type === 'breaker') drawBlade(w, eq, styled.paint);
     w.close();
+    fillMarks?.();
     if (place.labels.bubble) drawBubble(w, place.labels.bubble, node, styled.text);
     drawLabels(w, layout, node, place, styled.text);
     w.close();
@@ -304,10 +307,12 @@ function drawFill(
   layout: PidLayout,
   styled: Styled,
   ctx: RenderContext,
-): void {
+  /** Where the symbol's (0, 0) is in the diagram, and its scale. */
+  origin: Point,
+  f: number,
+): () => void {
   const { top, bottom } = inside;
   const height = bottom - top;
-  const yAt = (h: number) => bottom - h * height;
   const range = eq.gradientRange ?? model.gradientRange;
   const colour = (c: Rgb) => checkColor(hex(c));
 
@@ -347,77 +352,89 @@ function drawFill(
   }
   w.close();
 
+  // The outline again, over the fill, at its usual thickness whatever the scale.
+  for (const part of sym.parts) {
+    const d = part.tag === 'path' ? { d: toPath(String(part.attrs.d)) } : {};
+    w.leaf(part.tag, { ...part.attrs, ...d, fill: 'none', stroke: styled.paint.border, 'stroke-width': 1.4 / f, ...styled.shape });
+  }
+
+  // Readings, ticks and the level line are drawn after the symbol, in diagram coordinates, so
+  // they keep their size when the vessel is scaled.
   const marks = layout.fillMarks.get(eq.id);
   const markSize = layout.markSize;
-  const wallAt = (y: number) => inside.span(Math.min(bottom - 1, Math.max(top + 1, y)));
+  const X = (x: number) => origin.x + x * f;
+  const topA = origin.y + top * f;
+  const bottomA = origin.y + bottom * f;
+  const heightA = bottomA - topA;
+  const yAt = (h: number) => bottomA - h * heightA;
+  const wallAt = (y: number): [number, number] | undefined => {
+    const span = inside.span(Math.min(bottom - 1, Math.max(top + 1, (y - origin.y) / f)));
+    return span && [X(span[0]), X(span[1])];
+  };
   // Text colour for whatever is behind it at height `y`: the fill there, or the empty vessel.
   const textOn = (y: number): Attrs => {
-    const h = (bottom - y) / height;
+    const h = (bottomA - y) / heightA;
     const filled = levelPercent === undefined || h <= levelPercent / 100;
     const c = filled ? colourAt(h) : undefined;
     return { fill: c ? colour(parseRgb(ink(c))!) : styled.text.fill, 'font-size': markSize };
   };
 
-  // The level: a line across the surface, the P&ID ▽ above it, and its value. A battery's
-  // charge is not a liquid: no surface line or ▽, just the fill and the value.
-  if (eq.level && levelPercent !== undefined && eq.type !== 'battery') {
-    const y = yAt(levelPercent / 100);
-    const span = wallAt(y);
-    if (span) {
-      w.leaf('path', { class: 'level', d: pathBuilder().moveTo(r(span[0]), r(y)).lineTo(r(span[1]), r(y)).done(), fill: 'none', stroke: styled.paint.border, 'stroke-width': 1.2 });
-      const x = span[1] - 9;
-      w.leaf('path', {
-        class: 'level-marker',
-        d: pathBuilder().moveTo(r(x - 4), r(y - 8)).lineTo(r(x + 4), r(y - 8)).lineTo(r(x), r(y - 2)).close().done(),
-        fill: 'none',
-        stroke: styled.paint.border,
-        'stroke-width': 1,
-      });
+  return () => {
+    // The level: a line across the surface, the P&ID ▽ above it, and its value. A battery's
+    // charge is not a liquid: no surface line or ▽, just the fill and the value.
+    if (eq.level && levelPercent !== undefined && eq.type !== 'battery') {
+      const y = yAt(levelPercent / 100);
+      const span = wallAt(y);
+      if (span) {
+        w.leaf('path', { class: 'level', d: pathBuilder().moveTo(r(span[0]), r(y)).lineTo(r(span[1]), r(y)).done(), fill: 'none', stroke: styled.paint.border, 'stroke-width': 1.2 });
+        const x = span[1] - 9;
+        w.leaf('path', {
+          class: 'level-marker',
+          d: pathBuilder().moveTo(r(x - 4), r(y - 8)).lineTo(r(x + 4), r(y - 8)).lineTo(r(x), r(y - 2)).close().done(),
+          fill: 'none',
+          stroke: styled.paint.border,
+          'stroke-width': 1,
+        });
+      }
     }
-  }
-  // Readings already placed, so later ones can step clear of them.
-  const taken: { y: number; half: number }[] = [];
-  const clearOf = (y: number, half: number) => {
-    let at = y;
-    for (let tries = 0; tries < 8; tries++) {
-      const hit = taken.find((t) => Math.abs(t.y - at) < t.half + half);
-      if (!hit) break;
-      at = hit.y + hit.half + half + 1;
+    // Readings already placed, so later ones can step clear of them.
+    const taken: { y: number; half: number }[] = [];
+    const clearOf = (y: number, half: number) => {
+      let at = y;
+      for (let tries = 0; tries < 8; tries++) {
+        const hit = taken.find((t) => Math.abs(t.y - at) < t.half + half);
+        if (!hit) break;
+        at = hit.y + hit.half + half + 1;
+      }
+      return at;
+    };
+    if (marks?.level && eq.level) {
+      const h = levelPercent === undefined ? 0.5 : levelPercent / 100;
+      const y = Math.max(topA + marks.level.height / 2 + 1, yAt(h) - 3 - marks.level.height / 2);
+      taken.push({ y, half: marks.level.height / 2 });
+      const span = wallAt(y);
+      // Labels are placed by their centre: start the text just inside the left wall.
+      if (span) w.label(marks.level, span[0] + 3 + marks.level.width / 2, y, { class: 'level-value', ...textOn(y) });
     }
-    return at;
+
+    // Readings at their heights: a tick on the left wall and the value beside it.
+    (eq.gradient ?? []).forEach((st, k) => {
+      const label = marks?.stops[k];
+      if (!label) return;
+      const wanted = Math.min(bottomA - label.height / 2 - 1, Math.max(topA + label.height / 2 + 1, yAt(st.height)));
+      const y = clearOf(wanted, label.height / 2);
+      if (y > bottomA - label.height / 2) return; // no room left below: leave this reading out
+      taken.push({ y, half: label.height / 2 });
+      const span = wallAt(y);
+      if (!span) return;
+      const attrs = textOn(y);
+      w.leaf('path', { class: 'gradient-tick', d: pathBuilder().moveTo(r(span[0]), r(y)).lineTo(r(span[0] + 4), r(y)).done(), stroke: attrs.fill as Paint['line'], 'stroke-width': 1 });
+      w.label(label, span[0] + 6 + label.width / 2, y, { class: 'gradient-value', ...attrs });
+    });
   };
-  if (marks?.level && eq.level) {
-    const h = levelPercent === undefined ? 0.5 : levelPercent / 100;
-    const y = Math.max(top + marks.level.height / 2 + 1, yAt(h) - 3 - marks.level.height / 2);
-    taken.push({ y, half: marks.level.height / 2 });
-    const span = wallAt(y);
-    // Labels are placed by their centre: start the text just inside the left wall.
-    if (span) w.label(marks.level, span[0] + 3 + marks.level.width / 2, y, { class: 'level-value', ...textOn(y) });
-  }
-
-  // Readings at their heights: a tick on the left wall and the value beside it.
-  (eq.gradient ?? []).forEach((st, k) => {
-    const label = marks?.stops[k];
-    if (!label) return;
-    const wanted = Math.min(bottom - label.height / 2 - 1, Math.max(top + label.height / 2 + 1, yAt(st.height)));
-    const y = clearOf(wanted, label.height / 2);
-    if (y > bottom - label.height / 2) return; // no room left below: leave this reading out
-    taken.push({ y, half: label.height / 2 });
-    const span = wallAt(y);
-    if (!span) return;
-    const attrs = textOn(y);
-    w.leaf('path', { class: 'gradient-tick', d: pathBuilder().moveTo(r(span[0]), r(y)).lineTo(r(span[0] + 4), r(y)).done(), stroke: attrs.fill as Paint['line'], 'stroke-width': 1 });
-    w.label(label, span[0] + 6 + label.width / 2, y, { class: 'gradient-value', ...attrs });
-  });
-
-  // The outline again, over the fill.
-  for (const part of sym.parts) {
-    const d = part.tag === 'path' ? { d: toPath(String(part.attrs.d)) } : {};
-    w.leaf(part.tag, { ...part.attrs, ...d, fill: 'none', stroke: styled.paint.border, 'stroke-width': 1.4, ...styled.shape });
-  }
 }
 
-function drawPart(w: SvgWriter, part: SymbolPart, eq: Equipment, look: StateLook, paint: Paint, extra: Attrs = {}): void {
+function drawPart(w: SvgWriter, part: SymbolPart, eq: Equipment, look: StateLook, paint: Paint, extra: Attrs = {}, f = 1): void {
   const d = part.tag === 'path' ? { d: toPath(String(part.attrs.d)) } : {};
   if (part.ink) {
     w.leaf(part.tag, { ...part.attrs, ...d, fill: paint.border, stroke: 'none' });
@@ -434,7 +451,7 @@ function drawPart(w: SvgWriter, part: SymbolPart, eq: Equipment, look: StateLook
     fill: !part.fill ? 'none' : opacity > 0 ? paint.border : paint.bg,
     'fill-opacity': opacity > 0 && opacity < 1 ? r(opacity) : undefined,
     stroke: paint.border,
-    'stroke-width': 1.4,
+    'stroke-width': 1.4 / f,
     ...extra,
     ...(look.dashed ? { 'stroke-dasharray': DASH } : {}),
   });
@@ -513,6 +530,38 @@ function drawLabels(w: SvgWriter, layout: PidLayout, node: Point, place: NodePla
   line(labels.state, { class: 'equipment-state', 'font-size': fs - 2, 'font-style': 'italic' });
 }
 
+/** Where a line meets coil `i` of `eq`, in diagram coordinates: its inlet or outlet nozzle. */
+function coilNozzle(layout: PidLayout, eq: Equipment | undefined, i: number | undefined, end: 'inlet' | 'outlet'): Point | undefined {
+  if (!eq || i === undefined || !eq.coils?.[i]) return undefined;
+  const node = layout.nodes.get(eq.id);
+  const place = layout.placements.get(eq.id);
+  const shape = coilShape(eq.type, eq.coils[i], coilSide(layout, eq, i, 'in'), coilSide(layout, eq, i, 'out'));
+  if (!node || !place || !shape) return undefined;
+  const p = shape[end];
+  return { x: node.x - place.width / 2 + p.x * place.scale, y: node.y - place.height / 2 + p.y * place.scale };
+}
+
+/** Heat exchanger coils inside a vessel, over its contents; each named one has a tooltip. */
+function drawCoils(w: SvgWriter, eq: Equipment, layout: PidLayout, paint: Paint, f: number): void {
+  eq.coils?.forEach((coil, i) => {
+    const shape = coilShape(eq.type, coil, coilSide(layout, eq, i, 'in'), coilSide(layout, eq, i, 'out'));
+    if (!shape) return;
+    w.open('g', { class: `coil coil${i + 1}` });
+    if (coil.name) {
+      w.open('title');
+      w.text(coil.name);
+      w.close();
+    }
+    w.leaf('path', { d: toPath(shape.path), fill: 'none', stroke: paint.border, 'stroke-width': 1.6 / f });
+    w.close();
+  });
+}
+
+/** The wall a coil's inlet or outlet nozzle is on. */
+function coilSide(layout: PidLayout, eq: Equipment, i: number, end: 'in' | 'out'): 'left' | 'right' {
+  return layout.coilSides.get(coilKey(eq.id, i, end)) ?? eq.coils?.[i]?.side ?? 'left';
+}
+
 /** Compact symbols are met on their centre line; tall or wide ones anywhere near it. */
 const CENTRED: ReadonlySet<EquipmentType> = new Set([
   'pump', 'compressor', 'exchanger', 'valve', 'valve3', 'feed', 'product', 'instrument', 'tee',
@@ -528,7 +577,15 @@ const STUB = 10;
  * hold the labels. Moves the end (`atEnd`) or the start of `pts` onto the symbol: straight on
  * when it already lines up, else with a jog just outside the box. A port end meets its port.
  */
-function attach(pts: Point[], atEnd: boolean, layout: PidLayout, eq: Equipment | undefined, side: Side | undefined): void {
+function attach(
+  pts: Point[],
+  atEnd: boolean,
+  layout: PidLayout,
+  eq: Equipment | undefined,
+  side: Side | undefined,
+  /** An exact end on the symbol (a coil's nozzle), instead of one worked out from its shape. */
+  fixed?: Point,
+): void {
   const node = eq && layout.nodes.get(eq.id);
   const place = eq && layout.placements.get(eq.id);
   if (!eq || !node || !place || pts.length < 2) return;
@@ -544,14 +601,14 @@ function attach(pts: Point[], atEnd: boolean, layout: PidLayout, eq: Equipment |
   const symU = (across ? place.width : place.height) / 2;
   const symV = (across ? place.height : place.width) / 2;
   const boxU = (across ? (node as LayoutModelNode).width : (node as LayoutModelNode).height) / 2;
-  const round = side ? undefined : symbolFor(eq).round;
+  const radius = symbolFor(eq).round;
+  const round = side || radius === undefined ? undefined : radius * place.scale;
   const squareInstrument = eq.type === 'instrument' && !round;
   const reach = round ? round * 0.6 : side ? 0 : squareInstrument ? symV / 2 : CENTRED.has(eq.type) ? 0 : Math.max(0, symV - CORNER);
-  const v = Math.min(V(node) + reach, Math.max(V(node) - reach, V(E)));
-  // A round symbol is met on its circle; anything else on its bounding box.
+  const v = fixed ? V(fixed) : Math.min(V(node) + reach, Math.max(V(node) - reach, V(E)));
   // Lines run into a tee's centre; a round symbol is met on its circle; anything else on its box.
   const depth = eq.type === 'tee' ? 0 : round ? Math.sqrt(round * round - (v - V(node)) ** 2) : symU;
-  const end = at(U(node) + sign * depth, v);
+  const end = fixed ?? at(U(node) + sign * depth, v);
   let tail: Point[];
   const Q = pts.length >= 3 ? pts[atEnd ? i - 2 : 2] : undefined;
   if (Math.abs(V(E) - v) < 0.5 && Math.abs(V(P) - v) < 0.5) tail = [end];

@@ -1,4 +1,4 @@
-import type { Equipment, EquipmentType, InstrumentLocation, Port, ValveKind } from './model.js';
+import type { Coil, Equipment, EquipmentType, InstrumentLocation, Port, ValveKind } from './model.js';
 
 export interface SymbolPart {
   tag: 'path' | 'circle' | 'rect';
@@ -313,4 +313,64 @@ export function interiorOf(type: EquipmentType): Interior | undefined {
     default:
       return undefined;
   }
+}
+
+/** A coil as drawn: its nozzles on the wall, and its path, in symbol coordinates. */
+export interface CoilShape {
+  inlet: { x: number; y: number };
+  outlet: { x: number; y: number };
+  path: string;
+}
+
+/**
+ * A heat exchanger coil inside a vessel. With both nozzles on one wall: in at the upper nozzle, a
+ * zig-zag across the vessel and straight back to the lower one. With a nozzle on each wall: a
+ * zig-zag straight through, from the inlet's wall to the outlet's.
+ */
+export function coilShape(type: EquipmentType, coil: Coil, sideIn: 'left' | 'right', sideOut: 'left' | 'right' = sideIn): CoilShape | undefined {
+  const side = sideIn;
+  const inside = interiorOf(type);
+  if (!inside) return undefined;
+  const { top, bottom } = inside;
+  const height = bottom - top;
+  const ext = Math.max(8, Math.min(18, height * 0.18));
+  const mid = Math.min(bottom - ext / 2 - 3, Math.max(top + ext / 2 + 3, bottom - coil.height * height));
+  const yIn = mid - ext / 2;
+  const yOut = mid + ext / 2;
+  const wall = (y: number) => {
+    const span = inside.span(y) ?? inside.span(mid)!;
+    return side === 'left' ? span[0] : span[1];
+  };
+  const [a, b] = inside.span(mid)!;
+  const width = b - a;
+  const near = side === 'left' ? a + width * 0.14 : b - width * 0.14;
+  const far = side === 'left' ? b - width * 0.12 : a + width * 0.12;
+  const r = (n: number) => Math.round(n * 100) / 100;
+  const teeth = 5;
+  const zig: string[] = [];
+  for (let k = 1; k <= teeth; k++) zig.push(`L${r(near + ((far - near) * k) / teeth)} ${r(k % 2 ? yOut - 3 : yIn)}`);
+  if (sideIn !== sideOut) {
+    // Straight through: nozzles at mid-height on opposite walls.
+    const wallOf = (sd: 'left' | 'right') => (sd === 'left' ? a : b);
+    const from = sideIn === 'left' ? a + width * 0.12 : b - width * 0.12;
+    const to = sideIn === 'left' ? b - width * 0.12 : a + width * 0.12;
+    const pts: string[] = [];
+    for (let k = 1; k < teeth * 2; k++) pts.push(`L${r(from + ((to - from) * k) / (teeth * 2))} ${r(k % 2 ? yIn : yOut)}`);
+    const path = `M${r(wallOf(sideIn))} ${r(mid)} H${r(from)} ${pts.join(' ')} L${r(to)} ${r(mid)} H${r(wallOf(sideOut))}`;
+    return { inlet: { x: wallOf(sideIn), y: mid }, outlet: { x: wallOf(sideOut), y: mid }, path };
+  }
+  const path = `M${r(wall(yIn))} ${r(yIn)} H${r(near)} ${zig.join(' ')} V${r(yOut)} H${r(wall(yOut))}`;
+  return { inlet: { x: wall(yIn), y: yIn }, outlet: { x: wall(yOut), y: yOut }, path };
+}
+
+/**
+ * How many times its usual size `eq` is drawn: `size TAG f` when given; else a vessel with coils
+ * grows so they stay readable (1.25 for one, 1.5 for two, 1.8 for three or more). Images and
+ * icons have their own size.
+ */
+export function scaleOf(eq: Pick<Equipment, 'size' | 'coils' | 'image' | 'icon'>): number {
+  if (eq.image || eq.icon) return 1;
+  if (eq.size) return eq.size;
+  const n = eq.coils?.length ?? 0;
+  return n >= 3 ? 1.8 : n === 2 ? 1.5 : n === 1 ? 1.25 : 1;
 }

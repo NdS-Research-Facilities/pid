@@ -4,3 +4,6 @@ dist/
 out/
 .DS_Store
 ._*
+
+# Local reference images, not part of the repo
+home heating process cv.png

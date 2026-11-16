@@ -137,6 +137,40 @@ The tag is drawn inside the bubble, ISA-5.1 style: function letters over the loo
 
   ![L-port and T-port 3-way valves](docs/images/three-way-valves.png)
 
+### Coils inside vessels
+
+Tanks, vessels, drums, columns and reactors can hold heat exchanger coils:
+
+```
+T-1: tank "Buffer"
+coil T-1 bottom "Solar coil"            %% top | middle | bottom | @NN% (height from the bottom)
+coil T-1 middle "Heat pump coil"
+coil T-1 top right "Hot water coil"     %% left | right: both nozzles on that wall
+P-1 --> T-1.coil1                       %% into coil 1's inlet
+T-1.coil1 --> R-1                       %% out of its outlet
+PV-1 ==> T-1.coil3                      %% a cable: an electric heating element
+```
+
+- Coils are numbered in the order they are written: `coil1`, `coil2`, …; the name shows as a
+  tooltip.
+- Each nozzle goes on the wall facing its line. With the inlet and outlet on opposite walls the
+  coil runs straight through; on one wall (or with `left`/`right`) it turns back.
+- Coils are drawn over a gradient or level, so the tank's temperatures still show.
+- A vessel with coils is drawn larger so they stay readable (×1.25, ×1.5, ×1.8 for one, two,
+  three or more).
+
+`size TAG 1.5` draws any symbol larger or smaller (0.5 to 3); readings and line weights keep
+their size.
+
+![A buffer tank with three coils](docs/images/coils.png)
+
+[`examples/coils.mmd`](examples/coils.mmd) has this example;
+[`examples/home-heating.mmd`](examples/home-heating.mmd) is a home heating system with a
+three-coil buffer, a solar collector, a motorised diverter, radiators and an electric element
+fed from PV:
+
+![Home heating](docs/images/home-heating.png)
+
 ### Solar and electrical
 
 | Type | Draws | State |

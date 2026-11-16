@@ -1,0 +1,24 @@
+pid LR
+  title Buffer tank with heat exchanger coils
+  %% coil TAG top|middle|bottom|@NN% [left|right] ["Name"]; lines reach coils as TAG.coil1, TAG.coil2, …
+  SC-1: collector "Solar collector"
+  gradient SC-1 68 °C, 50 °C
+  P-1: pump "Solar pump" = on
+  R-1: product "Solar return"
+  HP-1: block "Heat pump" = on
+  icon HP-1 mdi:heat-pump 48
+  R-2: product "Heat pump return"
+  T-1: tank "Buffer"
+  coil T-1 bottom "Solar coil"
+  coil T-1 middle "Heat pump coil"
+  coil T-1 top right "Hot water coil"
+  gradient T-1 62 °C, 50 °C, 34 °C
+  F-1: feed "Cold water"
+  D-1: product "Hot water"
+
+  SC-1 --> P-1 --> T-1.coil1
+  T-1.coil1 --> R-1
+  HP-1 --> T-1.coil2
+  T-1.coil2 --> R-2
+  F-1 --> T-1.coil3
+  T-1.coil3 --> D-1

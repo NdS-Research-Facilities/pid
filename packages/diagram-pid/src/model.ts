@@ -80,6 +80,10 @@ export interface Equipment {
   gradientRange?: [number, number];
   /** `level TAG 73 %`: the liquid level, filled from the bottom. */
   level?: Level;
+  /** `coil TAG bottom "Solar coil"`: heat exchanger coils inside the vessel, `TAG.coil1` … */
+  coils?: Coil[];
+  /** `size TAG 1.5`: the symbol drawn this many times its usual size. */
+  size?: number;
   ast: string;
 }
 
@@ -107,6 +111,16 @@ export interface GradientStop {
   height: number;
 }
 
+/** A heat exchanger coil inside a vessel. Lines reach it as `TAG.coil1`, `TAG.coil2`, … */
+export interface Coil {
+  /** Height of its middle from the bottom, 0 … 1: top 0.8, middle 0.5, bottom 0.2, or `@NN%`. */
+  height: number;
+  /** The wall its nozzles are on; when absent, the side its lines come from. */
+  side?: 'left' | 'right';
+  /** Shown as a tooltip. */
+  name?: string;
+}
+
 export interface Level {
   raw: string;
   /** 0 … 100; absent when the level is unknown (`unavailable`). */
@@ -125,6 +139,9 @@ export interface Stream {
   target: string;
   sourcePort?: Port;
   targetPort?: Port;
+  /** A coil inside the source or target vessel (0 = `coil1`): out of its outlet, into its inlet. */
+  sourceCoil?: number;
+  targetCoil?: number;
   /** The stream tag shown on the line, e.g. `1`. */
   label?: string;
   /** `pipe 1 2"-CW-101-A1`: the line number written along the pipe. */

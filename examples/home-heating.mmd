@@ -1,0 +1,75 @@
+pid LR
+  title Home heating
+  %% Translated from a hand drawing (home heating process cv.png). Where the drawing leaves
+  %% something open, the choice made here is noted.
+
+  %% ── Equipment ───────────────────────────────────────────────────────────
+  HP-1: block "Central heating" = on
+  icon HP-1 mdi:heat-pump 56
+  SC-1: collector "Solar hot water"
+  gradient SC-1 64 °C, 48 °C
+  V3-1: valve3 T "Diverter" = AC
+  %% The drawing's valve has a motor (M); pid has no motor actuator for 3-way valves yet, so the
+  %% motor is shown as a control function driving it.
+  M-1: instrument "Valve motor" = auto
+  T-1: vessel "Buffer"
+  coil T-1 top "Solar coil"
+  coil T-1 middle "Heating coil"
+  coil T-1 bottom "Electric element"
+  gradient T-1 58 °C, 46 °C, 33 °C
+  P-1: pump "Radiator pump" = on
+  RAD-1: block "Radiators"
+  icon RAD-1 mdi:radiator 48
+  PV-1: pv "Electricity from PV" = 1.8 kW
+  %% The two diamonds: blue on the tank's bottom outlet, orange on the central heating unit's
+  %% bottom line. The drawing does not say what they are; read here as cold and hot water.
+  W-1: product "Blue connection"
+  W-2: product "Orange connection"
+  J-1: tee
+  J-2: tee
+  J-3: tee
+  J-4: tee
+  J-5: tee
+  J-6: tee
+
+  %% ── Solar loop: through the collector, then the diverter: bypass, or the top coil ──
+  HP-1 --> J-2 --> SC-1
+  SC-1 --> V3-1.A
+  V3-1.B --> J-1
+  V3-1.C --> J-3 --> T-1.coil1
+  T-1.coil1 --> J-1
+  J-1 --> HP-1
+
+  %% ── Radiator loop: middle coil, pump, radiators, back to the coil ─────────────
+  T-1.coil2 --> J-4 --> P-1 --> RAD-1
+  RAD-1 --> T-1.coil2
+
+  %% ── Electric element from PV ───────────────────────────────────────────
+  PV-1 ==> T-1.coil3
+
+  %% ── The central heating unit and the tank, and the two connections ─────────
+  HP-1 --> T-1
+  HP-1 --> J-5 --> W-2
+  T-1 --> J-6 --> W-1
+
+  %% ── Thermometers on the lines ───────────────────────────────────────────
+  TT-1: instrument "Solar flow" = 52 °C
+  TT-2: instrument "Coil in" = 61 °C
+  TT-3: instrument "Heating flow" = 45 °C
+  TT-4: instrument "Unit bottom" = 38 °C
+  TT-5: instrument "Tank bottom" = 31 °C
+  J-2 --- TT-1
+  J-3 --- TT-2
+  J-4 --- TT-3
+  J-5 --- TT-4
+  J-6 --- TT-5
+  M-1 -.-> V3-1
+
+  %% ── The drawing's colours ───────────────────────────────────────────────
+  classDef blue fill:#7da7d9,stroke:#4a78b5
+  classDef orange fill:#ff8a1f,stroke:#e06c00
+  class W-1 blue
+  class W-2 orange
+  linkStyle default stroke:#5b8fd0
+  %% …except the PV cable (line 12, counting from 0), which stays orange as power wiring
+  linkStyle 12 stroke:#ef6c00

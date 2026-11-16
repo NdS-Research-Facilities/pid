@@ -41,6 +41,11 @@ const PIPE = /^pipe\s+(\S+)\s+(.+)$/;
 const GRADIENT = /^gradient\s+([A-Za-z][\w.-]*)\s+(.+)$/;
 const GRADIENT_RANGE = /^gradient-range(?:\s+([A-Za-z][\w.-]*))?\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$/;
 const GRADIENT_MARKS = /^gradient-marks\s+(on|off)$/;
+const SIZE = /^size\s+([A-Za-z][\w.-]*)\s+(\d+(?:\.\d+)?)$/;
+const COIL = /^coil\s+([A-Za-z][\w.-]*)\s+(top|middle|bottom|@\s*\d+(?:\.\d+)?\s*%)(?:\s+(left|right))?(?:\s+"([^"]*)")?$/;
+const COIL_AT: Record<string, number> = { top: 0.8, middle: 0.5, bottom: 0.2 };
+/** Equipment a coil can go in. */
+export const COILABLE = new Set(['tank', 'vessel', 'drum', 'column', 'reactor']);
 const LEVEL = /^level\s+([A-Za-z][\w.-]*)\s+(.+)$/;
 /** A colour as a value: `#hex`, `rgb(…)`, `hsl(…)`; checked again when drawn. */
 const COLOUR = /^(#[0-9a-f]{3,8}|(?:rgb|rgba|hsl|hsla)\([^)]*\))$/i;
@@ -76,6 +81,7 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
     gradientMarks: true,
   };
   const fills: { id: string; start: number; end: number }[] = [];
+  const coilLines: { id: string; start: number; end: number }[] = [];
   const diagnostics: Diagnostic[] = [];
   const children: AstNode[] = [];
   const byId = new Map<string, Equipment>();
@@ -133,6 +139,22 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
     } else if ((m = GRADIENT.exec(line))) {
       touch(m[1]!, start, end).gradient = parseStops(decodeEntities(m[2]!));
       fills.push({ id: m[1]!, start, end });
+      continue;
+    } else if ((m = SIZE.exec(line))) {
+      const f = Number(m[2]);
+      if (f < 0.5 || f > 3) error(`size ${m[1]} ${m[2]}: use a factor from 0.5 to 3`, start, end);
+      else touch(m[1]!, start, end).size = f;
+      continue;
+    } else if ((m = COIL.exec(line))) {
+      const where = m[2]!.replace(/\s/g, '');
+      const height = where.startsWith('@') ? Math.min(1, Math.max(0, Number(where.slice(1, -1)) / 100)) : COIL_AT[where]!;
+      const eq = touch(m[1]!, start, end);
+      (eq.coils ??= []).push({
+        height,
+        ...(m[3] ? { side: m[3] as 'left' | 'right' } : {}),
+        ...(m[4] !== undefined ? { name: decodeEntities(m[4]) } : {}),
+      });
+      coilLines.push({ id: m[1]!, start, end });
       continue;
     } else if ((m = LEVEL.exec(line))) {
       touch(m[1]!, start, end).level = parseLevel(decodeEntities(m[2]!));
@@ -218,17 +240,32 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
 
   model.streams.forEach((s, i) => {
     const { start, end } = ranges[i]!;
-    const resolve = (ref: string): [string, Port | undefined] => {
+    const resolve = (ref: string): [string, Port | undefined, number | undefined] => {
       const m = /^(.+)\.([ABC])$/.exec(ref);
-      if (m && byId.get(m[1]!)?.type === 'valve3') return [m[1]!, m[2] as Port];
-      return [touch(ref, start, end).id, undefined];
+      if (m && byId.get(m[1]!)?.type === 'valve3') return [m[1]!, m[2] as Port, undefined];
+      const c = /^(.+)\.coil(\d+)$/.exec(ref);
+      if (c && byId.get(c[1]!)?.coils) {
+        const n = Number(c[2]);
+        const coils = byId.get(c[1]!)!.coils!;
+        if (n >= 1 && n <= coils.length) return [c[1]!, undefined, n - 1];
+        error(`${c[1]} has ${coils.length} coil${coils.length === 1 ? '' : 's'}: there is no coil${n}`, start, end);
+        return [c[1]!, undefined, undefined];
+      }
+      return [touch(ref, start, end).id, undefined, undefined];
     };
-    [s.source, s.sourcePort] = resolve(s.source);
-    [s.target, s.targetPort] = resolve(s.target);
+    let coil: number | undefined;
+    [s.source, s.sourcePort, coil] = resolve(s.source);
+    if (coil !== undefined) s.sourceCoil = coil;
+    [s.target, s.targetPort, coil] = resolve(s.target);
+    if (coil !== undefined) s.targetCoil = coil;
     const target = byId.get(s.target);
     if (s.kind === 'signal' && target?.type === 'valve' && target.valveKind !== 'relief') target.actuated = true;
   });
 
+  for (const c of coilLines) {
+    const eq = byId.get(c.id)!;
+    if (!COILABLE.has(eq.type)) error(`${c.id} is a ${eq.type}: coils go in ${[...COILABLE].join(', ')}`, c.start, c.end);
+  }
   for (const f of fills) {
     const eq = byId.get(f.id)!;
     if (!FILLABLE.has(eq.type))
