@@ -1,0 +1,44 @@
+{
+  "name": "@nds/diagram-pfd",
+  "version": "0.0.1",
+  "description": "Process flow diagram (PFD) plugin for Mermaid v13",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "mermaid": {
+    "plugin": "diagram",
+    "id": "pfd",
+    "types": [
+      "pfd"
+    ],
+    "formats": [
+      "svg"
+    ],
+    "export": "pfd"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@mermaid-js/core": "13.0.0-alpha.3",
+    "mermaid": "13.0.0-alpha.3",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  },
+  "peerDependencies": {
+    "@mermaid-js/core": "13.0.0-alpha.3"
+  }
+}

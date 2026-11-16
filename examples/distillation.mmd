@@ -1,0 +1,16 @@
+pfd LR
+  title Simple distillation
+  F-1: feed "Crude"
+  T-101: tank "Feed tank"
+  P-101: pump "Feed pump"
+  E-101: exchanger "Preheater"
+  C-101: column "Distillation"
+  D-1: product "Distillate"
+  B-1: product "Bottoms"
+
+  F-1 --> T-101 -->|1| P-101 -->|2| E-101 -->|3| C-101
+  C-101 -->|4| D-1
+  C-101 -->|5| B-1
+
+  stream 1 { T: 25 °C, F: 1200 kg/h }
+  stream 3 { T: 95 °C }
