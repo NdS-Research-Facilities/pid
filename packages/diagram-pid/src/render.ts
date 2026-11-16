@@ -4,7 +4,8 @@ import type { PathData, SafeValue, SvgWriter } from '@mermaid-js/core/svg';
 import { pathBuilder, px, rotate, styleScope, styleText, themeStyleSheet, transforms, translate } from '@mermaid-js/core/svg';
 import type { MeasuredLabel } from '@mermaid-js/core/text';
 import type { LayoutModelNode, Side } from '@mermaid-js/core/layout';
-import { ARROW, endSides, LABEL_GAP, type NodePlacement, type PidLayout } from './layout.js';
+import { hopPaths } from '@mermaid-js/core/layout/hops';
+import { ARROW, drawsArrow, endSides, LABEL_GAP, type NodePlacement, type PidLayout } from './layout.js';
 import { PORTS, type Equipment, type EquipmentType, type PidModel, type Port, type Stream } from './model.js';
 import { boreProblem, connectedPorts, portOpen } from './state.js';
 import { symbolFor, type SymbolPart } from './symbols.js';
@@ -51,26 +52,37 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
 
   const byId = new Map(model.equipment.map((e) => [e.id, e]));
 
-  // Streams first, so equipment sits on top of line ends.
-  w.open('g', { class: 'streams' });
-  for (const s of model.streams) {
+  // Streams first, so equipment sits on top of line ends. Their routes are settled before any is
+  // drawn, so lines that cross without joining can hop over each other.
+  const routes = model.streams.flatMap((s) => {
     const edge = layout.edges.get(s.id);
-    if (!edge || edge.points.length < 2) continue;
+    if (!edge || edge.points.length < 2) return [];
     const pts = edge.points.map((p) => ({ x: p.x, y: p.y }));
     const sides = endSides(model.direction, s, byId);
     attach(pts, false, layout, byId.get(s.source), sides.source);
     attach(pts, true, layout, byId.get(s.target), sides.target);
+    if (byId.get(s.source)?.type === 'tee') bendAtTee(pts, false);
+    if (byId.get(s.target)?.type === 'tee') bendAtTee(pts, true);
+    return [{ s, edge, pts, d: polyline(dedupe(pts)) }];
+  });
+  const hopped = hopPaths(
+    routes.map((r) => r.d),
+    'arc',
+  );
+
+  w.open('g', { class: 'streams' });
+  routes.forEach(({ s, edge, pts, d }, i) => {
     const blocked = s.kind === 'process' && isBlocked(s, byId);
     w.open('g', { class: `stream ${s.kind}${blocked ? ' stream-blocked' : ''}`, 'data-id': s.ast });
     w.leaf('path', {
-      d: polyline(pts),
+      d: hopped[i] ?? d,
       fill: 'none',
       stroke: paint.line,
       'stroke-width': WEIGHT[s.kind],
       'stroke-dasharray': s.kind === 'signal' ? SIGNAL_DASH : blocked ? DASH : undefined,
       'stroke-opacity': blocked ? 0.55 : undefined,
     });
-    if (s.arrow)
+    if (drawsArrow(s, byId))
       w.leaf('path', { d: arrowHead(pts[pts.length - 2]!, pts[pts.length - 1]!), fill: paint.line, stroke: 'none' });
     const lbl = layout.edgeLabels.get(s.id);
     if (lbl && edge.label) {
@@ -88,7 +100,7 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
       w.label(lbl.box, edge.label.x, edge.label.y, { fill: paint.text, 'font-size': layout.fontSize - 2 });
     }
     w.close();
-  }
+  });
   w.close();
 
   w.open('g', { class: 'equipment' });
@@ -201,7 +213,7 @@ function drawLabels(w: SvgWriter, layout: PidLayout, node: Point, place: NodePla
 }
 
 /** Compact symbols are met on their centre line; tall or wide ones anywhere near it. */
-const CENTRED: ReadonlySet<EquipmentType> = new Set(['pump', 'compressor', 'exchanger', 'valve', 'valve3', 'feed', 'product', 'instrument']);
+const CENTRED: ReadonlySet<EquipmentType> = new Set(['pump', 'compressor', 'exchanger', 'valve', 'valve3', 'feed', 'product', 'instrument', 'tee']);
 /** Keep stream ends this far from a symbol's corners. */
 const CORNER = 20;
 /** How far outside the box a stream turns to line up with the symbol. */
@@ -229,10 +241,12 @@ function attach(pts: Point[], atEnd: boolean, layout: PidLayout, eq: Equipment |
   const symV = (across ? place.height : place.width) / 2;
   const boxU = (across ? (node as LayoutModelNode).width : (node as LayoutModelNode).height) / 2;
   const round = side ? undefined : symbolFor(eq).round;
-  const reach = round ? round * 0.6 : side || CENTRED.has(eq.type) ? 0 : Math.max(0, symV - CORNER);
+  const squareInstrument = eq.type === 'instrument' && !round;
+  const reach = round ? round * 0.6 : side ? 0 : squareInstrument ? symV / 2 : CENTRED.has(eq.type) ? 0 : Math.max(0, symV - CORNER);
   const v = Math.min(V(node) + reach, Math.max(V(node) - reach, V(E)));
   // A round symbol is met on its circle; anything else on its bounding box.
-  const depth = round ? Math.sqrt(round * round - (v - V(node)) ** 2) : symU;
+  // Lines run into a tee's centre; a round symbol is met on its circle; anything else on its box.
+  const depth = eq.type === 'tee' ? 0 : round ? Math.sqrt(round * round - (v - V(node)) ** 2) : symU;
   const end = at(U(node) + sign * depth, v);
   let tail: Point[];
   if (Math.abs(V(E) - v) < 0.5 && Math.abs(V(P) - v) < 0.5) tail = [end];
@@ -241,6 +255,31 @@ function attach(pts: Point[], atEnd: boolean, layout: PidLayout, eq: Equipment |
     tail = [at(U(stub), V(P)), stub, end];
   }
   pts.splice(i, 1, ...(atEnd ? tail : tail.reverse()));
+}
+
+/**
+ * The layout leaves a node straight before it turns, which puts a branch's fork somewhere along
+ * the pipe rather than at its tee. Moves the first turn after the tee (or the last before it,
+ * `atEnd`) back to the tee, so lines split and join at the dot. Only an orthogonal run of at
+ * least four points is moved, keeping every segment straight.
+ */
+function bendAtTee(pts: Point[], atEnd: boolean): void {
+  if (pts.length < 4) return;
+  const at = (k: number) => pts[atEnd ? pts.length - 1 - k : k]!;
+  const [tee, b, c, d] = [at(0), at(1), at(2), at(3)];
+  const near = (p: number, q: number) => Math.abs(p - q) < 0.5;
+  if (near(tee.y, b.y) && near(b.x, c.x) && near(c.y, d.y)) {
+    b.x = tee.x;
+    c.x = tee.x;
+  } else if (near(tee.x, b.x) && near(b.y, c.y) && near(c.x, d.x)) {
+    b.y = tee.y;
+    c.y = tee.y;
+  }
+}
+
+/** Drops points that repeat the one before them. */
+function dedupe(pts: readonly Point[]): Point[] {
+  return pts.filter((p, i) => i === 0 || Math.abs(p.x - pts[i - 1]!.x) > 0.01 || Math.abs(p.y - pts[i - 1]!.y) > 0.01);
 }
 
 /** A stream is blocked when either end is a valve port that is shut. */

@@ -85,6 +85,8 @@ export const SYMBOLS: Record<EquipmentType, SymbolDef> = {
     ],
   },
   instrument: { width: 42, height: 42, parts: [{ tag: 'circle', attrs: { cx: 21, cy: 21, r: 20 }, fill: true }] },
+  // A tee: where branch lines join the pipe, marked with a connection dot.
+  tee: { width: 8, height: 8, parts: [{ tag: 'circle', attrs: { cx: 4, cy: 4, r: 3.5 }, fill: false, ink: true }] },
   feed: { width: 70, height: 30, parts: [shape('M0 0 H55 L70 15 L55 30 H0 Z')] },
   product: { width: 70, height: 30, parts: [shape('M0 0 H55 L70 15 L55 30 H0 Z')] },
 };

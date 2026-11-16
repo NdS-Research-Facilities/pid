@@ -46,7 +46,23 @@ pid LR
 | `%% comment` | Comment |
 
 **Equipment types:** `block tank vessel drum column reactor pump compressor exchanger valve
-valve3 feed product instrument`.
+valve3 feed product instrument tee`.
+
+### Tees and crossings
+
+A `tee` is a junction on a pipe, drawn as a connection dot. Lines split and join at it without
+arrowheads, and instruments can tap the pipe there:
+
+```
+J-1: tee
+P-101 --> J-1 --> FV-102
+J-1 --> V-101 --> J-2
+J-1 --- PT-101
+```
+
+Where two lines cross without a tee, one hops over the other with a small arc.
+
+![Pump bypass with tees and pipe-mounted instruments](docs/images/junctions.png)
 
 ### Instruments
 
@@ -155,7 +171,6 @@ Mermaid v13 is alpha; the version is pinned exactly to `13.0.0-alpha.3`.
 
 - In `TB`/`BT` flows, a line on a 3-way valve's `C` port can be routed from the opposite side
   and cross other lines.
-- Instruments that tap a pipe (rather than a piece of equipment) are not supported yet.
 - The card has no visual editor and no clickable nodes yet.
 
 ## References

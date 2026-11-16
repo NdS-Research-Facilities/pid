@@ -1,0 +1,22 @@
+pid LR
+  title Pump bypass with pipe-mounted instruments
+  T-101: tank "Suction tank"
+  P-101: pump "Pump" = on
+  J-1: tee
+  J-2: tee
+  J-3: tee
+  V-101: valve globe "Bypass" = closed
+  FV-102: valve globe "Flow control" = 60%
+  E-101: exchanger "Cooler"
+  D-1: product "To users"
+  PT-101: instrument "Discharge" = 4.2 bar
+  FT-102: instrument "Flow" = 12.5 m³/h
+  FIC-102: instrument dcs "Flow control" = SP 12 m³/h
+
+  T-101 -->|1| P-101 -->|2| J-1 --> FV-102 --> J-2 --> J-3 --> E-101 -->|3| D-1
+  J-1 --> V-101 --> J-2
+
+  %% Instruments tap the pipe at a tee
+  J-1 --- PT-101
+  J-3 --- FT-102
+  FT-102 -.-> FIC-102 -.-> FV-102

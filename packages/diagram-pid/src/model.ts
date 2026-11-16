@@ -3,7 +3,7 @@ import type { Dir } from '@mermaid-js/core/layout';
 /** The equipment kinds a P&ID knows how to draw. Anything else falls back to `block`. */
 export const EQUIPMENT_TYPES = [
   'block', 'tank', 'vessel', 'drum', 'column', 'reactor', 'pump', 'compressor',
-  'exchanger', 'valve', 'valve3', 'feed', 'product', 'instrument',
+  'exchanger', 'valve', 'valve3', 'feed', 'product', 'instrument', 'tee',
 ] as const;
 export type EquipmentType = (typeof EQUIPMENT_TYPES)[number];
 

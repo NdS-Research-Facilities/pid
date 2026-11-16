@@ -130,6 +130,16 @@ describe('3-way valve bores', () => {
   });
 });
 
+describe('tees', () => {
+  it('reads tees as junctions on the pipe', () => {
+    const { model, diagnostics } = parsePid(read('junctions.mmd'));
+    expect(diagnostics).toEqual([]);
+    expect(model.equipment.filter((e) => e.type === 'tee').map((e) => e.id)).toEqual(['J-1', 'J-2', 'J-3']);
+    const from = (id: string) => model.streams.filter((s) => s.source === id).map((s) => s.target);
+    expect(from('J-1')).toEqual(['FV-102', 'V-101', 'PT-101']);
+  });
+});
+
 describe('Mermaid v13 integration', () => {
   it('detects and renders a pid to SVG', async () => {
     const mermaid = createMermaid();
@@ -154,6 +164,13 @@ describe('Mermaid v13 integration', () => {
         expect(svg).toMatch(/class="equipment instrument state-unknown"/); // PT-103 unavailable
         expect(svg.match(/class="stream signal"/g)).toHaveLength(2);
         expect(svg.match(/class="stream connection"/g)).toHaveLength(4);
+      }
+      if (file === 'junctions.mmd') {
+        expect(svg.match(/class="equipment tee"/g)).toHaveLength(3);
+        // Tees carry no labels, and lines into a tee have no arrowhead: 13 lines, 8 arrowheads
+        // (3 into tees, 2 instrument connections without one).
+        expect(svg).not.toContain('>J-1<');
+        expect(svg.match(/class="stream /g)).toHaveLength(13);
       }
       if (file === 'three-way-valves.mmd') {
         expect(svg.match(/class="bore bore-L"/g)).toHaveLength(2);

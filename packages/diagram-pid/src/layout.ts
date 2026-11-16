@@ -90,6 +90,11 @@ export function endSides(dir: Dir, s: Stream, byId: ReadonlyMap<string, Equipmen
   return { source, target };
 }
 
+/** Lines end in an arrowhead unless they run into a tee, where the pipe just continues. */
+export function drawsArrow(s: Stream, byId: ReadonlyMap<string, Equipment>): boolean {
+  return s.arrow && byId.get(s.target)?.type !== 'tee';
+}
+
 /** The box side each 3-way valve port faces: A upstream, B downstream, C across the flow. */
 export function portSide(dir: Dir, port: Port): Side {
   const sides: Record<Dir, Record<Port, Side>> = {
@@ -125,6 +130,12 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
   const nodes: LayoutNode[] = model.equipment.map((eq) => {
     const sym = symbolFor(eq);
     const instrument = eq.type === 'instrument';
+    const tee = eq.type === 'tee';
+    if (tee) {
+      // A tee is a point on the pipe: no labels, and a box no larger than its dot.
+      placements.set(eq.id, { labels: { width: 0, height: 0 }, side: 'below', width: sym.width, height: sym.height, turn: 0 });
+      return { id: eq.id, width: sym.width, height: sym.height, shape: eq.type };
+    }
     const tag = instrument ? undefined : measure(eq.id, font, Style.Bold);
     const value = instrument && eq.state ? measure(instrumentText(eq.state), font, Style.Bold) : undefined;
     const name = eq.name ? measure(eq.name, small) : undefined;
@@ -166,7 +177,7 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
   const edgeLabels = new Map<string, EdgeLabel>();
   const edges: LayoutEdge[] = model.streams.map((s) => {
     const edge: LayoutEdge = { id: s.id, source: s.source, target: s.target, minLen: 1 };
-    if (s.arrow) edge.endMarker = ARROW;
+    if (drawsArrow(s, byId)) edge.endMarker = ARROW;
     const sides = endSides(model.direction, s, byId);
     if (sides.source || sides.target) edge.sides = sides;
     if (s.label !== undefined) {
