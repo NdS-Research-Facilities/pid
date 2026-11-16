@@ -72,6 +72,12 @@ export interface Equipment {
   image?: { url: string; width: number; height: number };
   /** `icon TAG pack:name [size]`: an Iconify icon (e.g. `mdi:thermometer`) in place of the symbol. */
   icon?: { name: string; size: number };
+  /** `gradient TAG 62 °C, 48 °C, 31 °C`: the contents coloured from top to bottom. */
+  gradient?: GradientStop[];
+  /** `gradient-range TAG 20 70`: this vessel's colour scale, over the diagram's. */
+  gradientRange?: [number, number];
+  /** `level TAG 73 %`: the liquid level, filled from the bottom. */
+  level?: Level;
   ast: string;
 }
 
@@ -85,6 +91,26 @@ export interface StreamProperty {
  * (`---`, a thin solid line), or an electrical `signal` (`-.->`, `-.-`, dashed).
  */
 export type LineKind = 'process' | 'connection' | 'signal';
+
+/** One point of a vessel's colour gradient: a reading on the colour scale, or a colour. */
+export interface GradientStop {
+  /** As written, for its mark: `62 °C`. */
+  raw: string;
+  /** The reading, when the stop starts with a number. */
+  value?: number;
+  /** A colour given instead of a reading (`#c62828`), checked when drawn. */
+  color?: string;
+  /** Height from the bottom, 0 … 1: `@25%`, else spread evenly from top to bottom. */
+  height: number;
+}
+
+export interface Level {
+  raw: string;
+  /** 0 … 100; absent when the level is unknown (`unavailable`). */
+  percent?: number;
+  /** The liquid's colour without a gradient. */
+  color?: string;
+}
 
 /** One line between two pieces of equipment or instruments, optionally at a port (`V-1.C`). */
 export interface Stream {
@@ -117,4 +143,8 @@ export interface PidModel {
   classDefs: Map<string, string[]>;
   /** `linkStyle default decl,decl`: applied to every line before its own `linkStyle`. */
   linkStyleDefault?: string[];
+  /** `gradient-range 20 70`: readings at or below the first are coldest, at or above the second hottest. */
+  gradientRange: [number, number];
+  /** `gradient-marks off` hides the readings drawn inside vessels. */
+  gradientMarks: boolean;
 }

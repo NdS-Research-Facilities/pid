@@ -42,6 +42,11 @@ const VALUES: Record<string, [string, Record<string, unknown>?]> = {
   'sensor.raw_water_flow': ['1200.4'],
   'sensor.preheater_pressure': ['3.2'],
   'sun.sun': ['above_horizon'],
+  'sensor.tank_temp_top': ['78.2'],
+  'sensor.tank_temp_mid': ['63.9'],
+  'sensor.tank_temp_bottom': ['41.4'],
+  'sensor.stripper_top_temp': ['96.1'],
+  'sensor.stripper_bottom_temp': ['58.4'],
 };
 
 describe('examples/all-capabilities.card.yaml', () => {
@@ -77,6 +82,9 @@ describe('examples/all-capabilities.card.yaml', () => {
       for (const text of ['85.2 °C', '4.8 bar', '12.5 m³/h', '1284 m³', '7.2 pH', '-4.5 °C', 'SP 85 °C', '55 % open', 'batch 42', 'T: 15.0 °C', 'A–B', 'running'])
         expect(svg, text).toContain(text);
       expect(svg).toContain('class-alarm');
+      expect(svg).toContain('has-gradient has-level');
+      expect(svg).toContain('73 %');
+      expect(svg).toContain('78 °C');
       expect(svg).toContain('href="/local/assets/heat-pump.png"');
       expect(svg.match(/class="custom-icon"/g)).toHaveLength(3);
       const clickable = [...root.querySelectorAll('.clickable')].map((el) => el.getAttribute('data-id'));

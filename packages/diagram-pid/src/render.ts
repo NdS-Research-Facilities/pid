@@ -2,6 +2,7 @@ import type { RenderContext } from '@mermaid-js/core';
 import type { Point } from '@mermaid-js/core/layout';
 import type { PathData, SafeValue, SvgWriter } from '@mermaid-js/core/svg';
 import {
+  checkColor,
   checkImageUrl,
   checkStyle,
   pathBuilder,
@@ -22,7 +23,7 @@ import { hopPaths } from '@mermaid-js/core/layout/hops';
 import { ARROW, drawsArrow, endSides, LABEL_GAP, LINE_NUMBER_GAP, type NodePlacement, type PidLayout } from './layout.js';
 import { PORTS, type Equipment, type EquipmentType, type PidModel, type Port, type Stream } from './model.js';
 import { boreProblem, connectedPorts, portOpen } from './state.js';
-import { symbolFor, type SymbolPart } from './symbols.js';
+import { interiorOf, symbolFor, type Interior, type SymbolDef, type SymbolPart } from './symbols.js';
 
 const DASH = '4 3' as SafeValue;
 const SIGNAL_DASH = '7 3' as SafeValue;
@@ -141,7 +142,14 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     const top = node.y - place.height / 2;
     const look = stateLook(eq);
     const styled = styleFor(eq, model, paint, ctx);
-    const classes = ['equipment', eq.type, ...look.classes, ...(eq.classes ?? []).map((c) => `class-${c}`)];
+    const classes = [
+      'equipment',
+      eq.type,
+      ...look.classes,
+      ...(eq.gradient ? ['has-gradient'] : []),
+      ...(eq.level ? ['has-level'] : []),
+      ...(eq.classes ?? []).map((c) => `class-${c}`),
+    ];
     w.open('g', { class: classes.join(' '), 'data-id': eq.ast });
     const turned =
       place.turn === 90
@@ -153,6 +161,8 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     w.open('g', { transform: place.mirror ? transforms(turned, translate(0, sym.height), scale(1, -1)) : turned });
     if (eq.image || eq.icon) drawCustom(w, eq, place, look, styled, ctx);
     for (const part of sym.parts) drawPart(w, part, eq, look, styled.paint, styled.shape);
+    const inside = (eq.gradient || eq.level) && interiorOf(eq.type);
+    if (inside) drawFill(w, eq, inside, sym, model, layout, styled, ctx);
     if (eq.type === 'valve3') drawBore(w, eq, styled.paint);
     w.close();
     if (place.labels.bubble) drawBubble(w, place.labels.bubble, node, styled.text);
@@ -238,6 +248,166 @@ export function imageUrl(url: string, ctx: Pick<RenderContext, 'config'>): strin
   const base = String((ctx.config as { pid?: { imageBase?: unknown } }).pid?.imageBase ?? '');
   if (!base) return url;
   return base.replace(/\/*$/, '/') + url.replace(/^\.\//, '');
+}
+
+/** The colour scale for readings, cold to hot. */
+const SCALE: readonly Rgb[] = ['#1565c0', '#29b6f6', '#fdd835', '#fb8c00', '#c62828'].map((h) => parseRgb(h)!);
+/** A level's liquid without a gradient. */
+const LIQUID = '#90caf9';
+/** Band height of a fill, px: thin enough to read as a smooth gradient. */
+const BAND = 2;
+
+type Rgb = [number, number, number];
+
+/** `#rgb`, `#rrggbb` or `rgb(r, g, b)` as numbers; undefined for anything else. */
+function parseRgb(text: string): Rgb | undefined {
+  const t = text.trim();
+  let m = /^#([0-9a-f]{3})$/i.exec(t);
+  if (m) return [...m[1]!].map((c) => parseInt(c + c, 16)) as Rgb;
+  m = /^#([0-9a-f]{6})(?:[0-9a-f]{2})?$/i.exec(t);
+  if (m) return [0, 2, 4].map((i) => parseInt(m![1]!.slice(i, i + 2), 16)) as Rgb;
+  m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(t);
+  if (m) return [Number(m[1]), Number(m[2]), Number(m[3])].map((v) => Math.min(255, v)) as Rgb;
+  return undefined;
+}
+
+const mix = (a: Rgb, b: Rgb, t: number): Rgb => [0, 1, 2].map((i) => Math.round(a[i]! + (b[i]! - a[i]!) * t)) as Rgb;
+const hex = (c: Rgb) => `#${c.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+
+/** Where `value` falls on the colour scale over `range` (either way round). */
+export function scaleColour(value: number, [lo, hi]: readonly [number, number]): Rgb {
+  const t = Math.min(1, Math.max(0, (value - lo) / (hi - lo)));
+  const x = t * (SCALE.length - 1);
+  const i = Math.min(SCALE.length - 2, Math.floor(x));
+  return mix(SCALE[i]!, SCALE[i + 1]!, x - i);
+}
+
+/** Black or white, whichever reads better on `bg`. */
+const ink = (bg: Rgb): string => (0.2126 * bg[0] + 0.7152 * bg[1] + 0.0722 * bg[2] > 140 ? '#000000' : '#ffffff');
+
+/**
+ * A vessel's contents: a gradient through its stops (readings on the colour scale, or colours),
+ * up to the level when there is one; then the level line with its ▽, the readings on the wall,
+ * and the outline again on top. Built from horizontal bands that follow the inner wall.
+ */
+function drawFill(
+  w: SvgWriter,
+  eq: Equipment,
+  inside: Interior,
+  sym: SymbolDef,
+  model: PidModel,
+  layout: PidLayout,
+  styled: Styled,
+  ctx: RenderContext,
+): void {
+  const { top, bottom } = inside;
+  const height = bottom - top;
+  const yAt = (h: number) => bottom - h * height;
+  const range = eq.gradientRange ?? model.gradientRange;
+  const colour = (c: Rgb) => checkColor(hex(c));
+
+  // Gradient stops with a colour, bottom to top; a reading Home Assistant does not have is skipped.
+  const stops = (eq.gradient ?? [])
+    .flatMap((st) => {
+      const c = st.color !== undefined ? parseRgb(st.color) : st.value !== undefined ? scaleColour(st.value, range) : undefined;
+      if (st.color !== undefined && !c)
+        ctx.warn({ code: 'PID_GRADIENT_COLOUR', message: `${eq.id}: gradient colour "${st.color}" is not #hex or rgb()` });
+      return c ? [{ h: st.height, c }] : [];
+    })
+    .sort((a, b) => a.h - b.h);
+  const levelPercent = eq.level?.percent;
+  const plain = parseRgb(eq.level?.color ?? LIQUID) ?? parseRgb(LIQUID)!;
+  const colourAt = (h: number): Rgb | undefined => {
+    if (!stops.length) return eq.level && levelPercent !== undefined ? plain : undefined;
+    if (h <= stops[0]!.h) return stops[0]!.c;
+    const last = stops[stops.length - 1]!;
+    if (h >= last.h) return last.c;
+    const k = stops.findIndex((st) => st.h >= h);
+    const a = stops[k - 1]!;
+    const b = stops[k]!;
+    return mix(a.c, b.c, (h - a.h) / (b.h - a.h || 1));
+  };
+
+  w.open('g', { class: 'fill' });
+  for (let y = top; y < bottom; y += BAND) {
+    const h = (bottom - (y + BAND / 2)) / height;
+    if (levelPercent !== undefined && h > levelPercent / 100) continue;
+    const span = inside.span(y + BAND / 2);
+    const c = colourAt(h);
+    if (!span || !c) continue;
+    const [x0, x1] = [span[0] + 0.8, span[1] - 0.8];
+    if (x1 <= x0) continue;
+    w.leaf('rect', { x: r(x0), y: r(y), width: r(x1 - x0), height: BAND + 0.4, fill: colour(c), stroke: 'none' });
+  }
+  w.close();
+
+  const marks = layout.fillMarks.get(eq.id);
+  const markSize = layout.markSize;
+  const wallAt = (y: number) => inside.span(Math.min(bottom - 1, Math.max(top + 1, y)));
+  // Text colour for whatever is behind it at height `y`: the fill there, or the empty vessel.
+  const textOn = (y: number): Attrs => {
+    const h = (bottom - y) / height;
+    const filled = levelPercent === undefined || h <= levelPercent / 100;
+    const c = filled ? colourAt(h) : undefined;
+    return { fill: c ? colour(parseRgb(ink(c))!) : styled.text.fill, 'font-size': markSize };
+  };
+
+  // The level: a line across the surface, the P&ID ▽ above it, and its value.
+  if (eq.level && levelPercent !== undefined) {
+    const y = yAt(levelPercent / 100);
+    const span = wallAt(y);
+    if (span) {
+      w.leaf('path', { class: 'level', d: pathBuilder().moveTo(r(span[0]), r(y)).lineTo(r(span[1]), r(y)).done(), fill: 'none', stroke: styled.paint.border, 'stroke-width': 1.2 });
+      const x = span[1] - 9;
+      w.leaf('path', {
+        class: 'level-marker',
+        d: pathBuilder().moveTo(r(x - 4), r(y - 8)).lineTo(r(x + 4), r(y - 8)).lineTo(r(x), r(y - 2)).close().done(),
+        fill: 'none',
+        stroke: styled.paint.border,
+        'stroke-width': 1,
+      });
+    }
+  }
+  // Readings already placed, so later ones can step clear of them.
+  const taken: { y: number; half: number }[] = [];
+  const clearOf = (y: number, half: number) => {
+    let at = y;
+    for (let tries = 0; tries < 8; tries++) {
+      const hit = taken.find((t) => Math.abs(t.y - at) < t.half + half);
+      if (!hit) break;
+      at = hit.y + hit.half + half + 1;
+    }
+    return at;
+  };
+  if (marks?.level && eq.level) {
+    const h = levelPercent === undefined ? 0.5 : levelPercent / 100;
+    const y = Math.max(top + marks.level.height / 2 + 1, yAt(h) - 3 - marks.level.height / 2);
+    taken.push({ y, half: marks.level.height / 2 });
+    const span = wallAt(y);
+    // Labels are placed by their centre: start the text just inside the left wall.
+    if (span) w.label(marks.level, span[0] + 3 + marks.level.width / 2, y, { class: 'level-value', ...textOn(y) });
+  }
+
+  // Readings at their heights: a tick on the left wall and the value beside it.
+  (eq.gradient ?? []).forEach((st, k) => {
+    const label = marks?.stops[k];
+    if (!label) return;
+    const wanted = Math.min(bottom - label.height / 2 - 1, Math.max(top + label.height / 2 + 1, yAt(st.height)));
+    const y = clearOf(wanted, label.height / 2);
+    if (y > bottom - label.height / 2) return; // no room left below: leave this reading out
+    taken.push({ y, half: label.height / 2 });
+    const span = wallAt(y);
+    if (!span) return;
+    const attrs = textOn(y);
+    w.leaf('path', { class: 'gradient-tick', d: pathBuilder().moveTo(r(span[0]), r(y)).lineTo(r(span[0] + 4), r(y)).done(), stroke: attrs.fill as Paint['line'], 'stroke-width': 1 });
+    w.label(label, span[0] + 6 + label.width / 2, y, { class: 'gradient-value', ...attrs });
+  });
+
+  // The outline again, over the fill.
+  for (const part of sym.parts) {
+    const d = part.tag === 'path' ? { d: toPath(String(part.attrs.d)) } : {};
+    w.leaf(part.tag, { ...part.attrs, ...d, fill: 'none', stroke: styled.paint.border, 'stroke-width': 1.4, ...styled.shape });
+  }
 }
 
 function drawPart(w: SvgWriter, part: SymbolPart, eq: Equipment, look: StateLook, paint: Paint, extra: Attrs = {}): void {

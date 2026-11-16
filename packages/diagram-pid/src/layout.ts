@@ -58,8 +58,14 @@ export interface PidLayout extends LayoutModel {
   edgeLabels: Map<string, EdgeLabel>;
   /** Line numbers (`pipe 1 2"-CW-101-A1`) by stream id. */
   lineNumbers: Map<string, MeasuredLabel>;
+  /** Readings drawn inside vessels: per gradient stop (none for a colour stop), and the level. */
+  fillMarks: Map<string, { stops: (MeasuredLabel | undefined)[]; level?: MeasuredLabel }>;
+  /** The font size of those readings. */
+  markSize: number;
   fontSize: number;
 }
+
+const round1 = (n: number) => Math.round(n * 10) / 10;
 
 /** A font size that fits `letters` across an instrument bubble. */
 const size0 = (letters: string) => (letters.length <= 3 ? 11 : letters.length === 4 ? 9 : 8);
@@ -286,5 +292,16 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
     });
     laid = run();
   }
-  return { ...laid, placements, edgeLabels, lineNumbers, fontSize: size };
+  const markSize = Math.max(8, size - 4);
+  const markFont: FontKey = { family, size: markSize, weight: 400 };
+  const fillMarks: PidLayout['fillMarks'] = new Map();
+  if (model.gradientMarks)
+    for (const eq of model.equipment) {
+      if (!eq.gradient && !eq.level) continue;
+      fillMarks.set(eq.id, {
+        stops: (eq.gradient ?? []).map((st) => (st.color ? undefined : measure(st.value === undefined ? '?' : st.raw, markFont))),
+        level: eq.level ? measure(eq.level.percent === undefined ? '?' : `${round1(eq.level.percent)} %`, markFont) : undefined,
+      });
+    }
+  return { ...laid, placements, edgeLabels, lineNumbers, fillMarks, markSize, fontSize: size };
 }

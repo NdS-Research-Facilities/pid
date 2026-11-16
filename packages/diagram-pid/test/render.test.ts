@@ -210,6 +210,50 @@ describe('all-capabilities example', () => {
     expect(model.streams.some((s) => s.lineNumber) && model.streams.some((s) => s.style) && model.linkStyleDefault).toBeTruthy();
     expect(model.streams[13]).toMatchObject({ source: 'HP-1', target: 'E-101' });
     expect(eq.find((e) => e.id === 'AT-106')?.name).toBe('pH (outlet)');
+    expect(eq.some((e) => e.gradient) && eq.some((e) => e.level)).toBe(true);
+  });
+});
+
+describe('gradients and levels', () => {
+  it('reads stops top to bottom, heights, colours and unknown readings', async () => {
+    const { parseStops, parseLevel } = await import('../src/parser.js');
+    expect(parseStops('64 °C, 52 °C, 38 °C')).toEqual([
+      { raw: '64 °C', value: 64, height: 1 },
+      { raw: '52 °C', value: 52, height: 0.5 },
+      { raw: '38 °C', value: 38, height: 0 },
+    ]);
+    expect(parseStops('61 °C @90%, #1565c0, unavailable @10%')).toEqual([
+      { raw: '61 °C', value: 61, height: 0.9 },
+      { raw: '#1565c0', color: '#1565c0', height: 0.5 },
+      { raw: 'unavailable', height: 0.1 },
+    ]);
+    expect(parseStops('47 °C')).toEqual([{ raw: '47 °C', value: 47, height: 0.5 }]);
+    // Stops are separated by commas, so readings use a decimal point (as Home Assistant states do).
+    expect(parseStops('rgb(1, 2, 3), 48.5 °C')).toMatchObject([{ color: 'rgb(1, 2, 3)' }, { value: 48.5 }]);
+    expect(parseLevel('73 %')).toEqual({ raw: '73 %', percent: 73 });
+    expect(parseLevel('140 #ffb74d')).toEqual({ raw: '140', percent: 100, color: '#ffb74d' });
+    expect(parseLevel('unavailable')).toEqual({ raw: 'unavailable' });
+  });
+
+  it('reads ranges and marks, and refuses fills on equipment without an inside', () => {
+    const { model, diagnostics } = parsePid(read('gradients.mmd'));
+    expect(diagnostics).toEqual([]);
+    expect(model.gradientRange).toEqual([20, 70]);
+    expect(model.equipment.find((e) => e.id === 'T-8')?.gradientRange).toEqual([35, 60]);
+    expect(parsePid(read('gradients-no-marks.mmd')).model).toMatchObject({ gradientMarks: false, gradientRange: [15, 65] });
+    const bad = parsePid('pid\n  P-1: pump\n  level P-1 50 %\n  gradient-range 5 5\n').diagnostics.map((d) => d.message);
+    expect(bad).toEqual([
+      expect.stringContaining('gradient-range needs two different numbers'),
+      expect.stringContaining('P-1 is a pump: gradient and level work on tank, vessel, drum, column, reactor'),
+    ]);
+  });
+
+  it('maps readings onto the colour scale, either way round', async () => {
+    const { scaleColour } = await import('../src/render.js');
+    expect(scaleColour(20, [20, 70])).toEqual([0x15, 0x65, 0xc0]);
+    expect(scaleColour(70, [20, 70])).toEqual([0xc6, 0x28, 0x28]);
+    expect(scaleColour(99, [20, 70])).toEqual([0xc6, 0x28, 0x28]);
+    expect(scaleColour(20, [70, 20])).toEqual([0xc6, 0x28, 0x28]);
   });
 });
 
@@ -238,6 +282,18 @@ describe('Mermaid v13 integration', () => {
         expect(svg).toMatch(/class="equipment instrument state-unknown"/); // PT-103 unavailable
         expect(svg.match(/class="stream signal"/g)).toHaveLength(2);
         expect(svg.match(/class="stream connection"/g)).toHaveLength(4);
+      }
+      if (file === 'gradients.mmd') {
+        expect(svg.match(/class="equipment [a-z]+ has-gradient/g)!.length).toBe(9);
+        expect(svg.match(/class="level"/g)).toHaveLength(6); // T-6, T-7, T-8, V-1, D-1, R-1; T-9's is unknown
+        expect(svg).toContain('62 %');
+        expect(svg.match(/<g class="fill"/g)).toHaveLength(13); // every vessel with a gradient or level (T-9 empty)
+        expect(svg.split('<g class="fill">').slice(1).join('').match(/<rect /g)!.length).toBeGreaterThan(300);
+      }
+      if (file === 'gradients-no-marks.mmd') {
+        expect(svg).not.toContain('gradient-value');
+        expect(svg).not.toContain('level-value');
+        expect(svg).toContain('class="level"');
       }
       if (file === 'custom-styling.mmd') {
         expect(svg).toContain('class-alarm');

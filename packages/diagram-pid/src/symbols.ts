@@ -180,3 +180,63 @@ export function splitTag(tag: string): [letters: string, loop: string] {
   const m = /^([A-Za-z]+)[-\s]?(\d.*)$/.exec(tag);
   return m ? [m[1]!.toUpperCase(), m[2]!] : [tag, ''];
 }
+
+/**
+ * The inside of a vessel, for gradients and levels: its liquid space from `top` to `bottom`
+ * (symbol coordinates) and its width at each height. The SVG allowlist has no clip paths, so
+ * fills are built from bands sized by `span`.
+ */
+export interface Interior {
+  top: number;
+  bottom: number;
+  /** Left and right inner wall at height `y`, or undefined outside the vessel. */
+  span(y: number): [number, number] | undefined;
+}
+
+/** A capsule's inside, matching `capsule(w, h)`: heads are elliptical arcs 0.6 r deep. */
+function capsuleInterior(w: number, h: number): Interior {
+  if (h >= w) {
+    const r = w / 2;
+    const depth = r * 0.6;
+    return {
+      top: r - depth,
+      bottom: h - r + depth,
+      span(y) {
+        const off = y < r ? (r - y) / depth : y > h - r ? (y - (h - r)) / depth : 0;
+        if (off > 1) return undefined;
+        const half = r * Math.sqrt(1 - off * off);
+        return [r - half, r + half];
+      },
+    };
+  }
+  const r = h / 2;
+  const depth = r * 0.6;
+  return {
+    top: 0,
+    bottom: h,
+    span(y) {
+      const off = (y - r) / r;
+      if (Math.abs(off) > 1) return undefined;
+      const bulge = depth * Math.sqrt(1 - off * off);
+      return [r - bulge, w - r + bulge];
+    },
+  };
+}
+
+/** The inside of `type`, for those that can hold a gradient or level. A tank's roof is not liquid space. */
+export function interiorOf(type: EquipmentType): Interior | undefined {
+  switch (type) {
+    case 'tank':
+      return { top: 14, bottom: 80, span: (y) => (y >= 14 && y <= 80 ? [0, 64] : undefined) };
+    case 'vessel':
+      return capsuleInterior(50, 90);
+    case 'drum':
+      return capsuleInterior(100, 46);
+    case 'column':
+      return capsuleInterior(40, 150);
+    case 'reactor':
+      return capsuleInterior(64, 96);
+    default:
+      return undefined;
+  }
+}

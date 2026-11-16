@@ -193,6 +193,12 @@ content: |
     stream 1 { T: ${round(states['sensor.raw_water_temp'], 1)} °C, F: ${round(states['sensor.raw_water_flow'], 0)} kg/h }
     stream 3 { T: ${round(states['sensor.preheater_outlet_temp'], 0)} °C; P: ${fixed(states['sensor.preheater_pressure'], 1)} bar }
 
+    %% ── Contents: tank temperatures as a gradient, tank level as a fill ───────────
+    gradient T-101 ${round(states['sensor.tank_temp_top'], 0)} °C, ${round(states['sensor.tank_temp_mid'], 0)} °C @50%, ${round(states['sensor.tank_temp_bottom'], 0)} °C @10%
+    level T-101 ${states['sensor.tank_level']}
+    gradient C-101 ${round(states['sensor.stripper_top_temp'], 0)} °C, ${round(states['sensor.stripper_bottom_temp'], 0)} °C
+    gradient-range 30 100
+
     %% ── Colours from live values: alarm above 4.5 bar ──────────────────────────
     classDef ok fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
     class PT-103 ${if(states['sensor.drum_pressure'] > 4.5, 'alarm', 'ok')}

@@ -1,0 +1,62 @@
+pid LR
+  title Gradients and levels: every option
+  %% gradient TAG <stops, top to bottom>   a stop is a reading (on the colour scale) or a colour
+  %% <stop> @NN%                           puts a stop at a height from the bottom
+  %% gradient-range [TAG] <cold> <hot>     the colour scale's ends (default 20 70)
+  %% level TAG <percent> [colour]          fills from the bottom to the level
+  %% gradient-marks off                    hides the readings (see gradients-no-marks.mmd)
+
+  %% Readings, spread evenly top to bottom on the default 20-70 scale
+  T-1: tank "Stratified"
+  gradient T-1 64 °C, 52 °C, 38 °C, 27 °C
+
+  %% Readings at the sensors' heights
+  T-2: tank "Sensor heights"
+  gradient T-2 61 °C @90%, 45 °C @50%, 30 °C @15%
+
+  %% Colours instead of readings: #hex and rgb()
+  T-3: tank "Colours"
+  gradient T-3 #c62828, rgb(255, 193, 7), #1565c0
+
+  %% Readings and colours mixed; one reading unavailable (skipped, shown as ?)
+  T-4: tank "Mixed"
+  gradient T-4 #6a1b9a, unavailable, 25 °C
+
+  %% One reading: the whole tank one colour
+  T-5: tank "Uniform"
+  gradient T-5 47 °C
+
+  %% Level only, default liquid colour; level with its own colour
+  T-6: tank "Level"
+  level T-6 73 %
+  T-7: tank "Level, colour"
+  level T-7 40 % #ffb74d
+
+  %% Level and gradient: only the liquid is coloured; its own colour scale
+  T-8: tank "Level + gradient"
+  gradient T-8 58 °C, 50 °C, 41 °C
+  level T-8 62 %
+  gradient-range T-8 35 60
+
+  %% Unknown level
+  T-9: tank "Level unknown"
+  level T-9 unavailable
+
+  %% Other vessels: column profile, vessel, horizontal drum, reactor
+  C-1: column "Column profile"
+  gradient C-1 92 °C @95%, 81 °C @70%, 66 °C @45%, 52 °C @20%, 40 °C @5%
+  gradient-range C-1 35 95
+  V-1: vessel "Vessel"
+  gradient V-1 70 °C, 22 °C
+  level V-1 85 %
+  D-1: drum "Drum"
+  level D-1 55 %
+  R-1: reactor "Reactor"
+  gradient R-1 88 °C, 75 °C
+  level R-1 70 %
+  gradient-range R-1 60 90
+
+  %% Thin lines only to lay the vessels out in three rows
+  T-1 --- T-2 --- T-3 --- T-4 --- T-5
+  T-6 --- T-7 --- T-8 --- T-9
+  C-1 --- V-1 --- D-1 --- R-1

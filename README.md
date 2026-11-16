@@ -127,6 +127,40 @@ The tag is drawn inside the bubble, ISA-5.1 style: function letters over the loo
 
   ![L-port and T-port 3-way valves](docs/images/three-way-valves.png)
 
+### Gradients and levels
+
+Tanks, vessels, drums, columns and reactors can show their contents:
+
+```
+gradient T-1 64 °C, 52 °C, 38 °C, 27 °C        %% readings, top to bottom
+gradient T-2 61 °C @90%, 45 °C @50%, 30 °C @15% %% at sensor heights (from the bottom)
+gradient T-3 #c62828, rgb(255, 193, 7), #1565c0 %% colours instead of readings
+gradient-range 20 70                            %% the colour scale: cold … hot (default)
+gradient-range T-8 35 60                        %% one vessel's own scale
+level T-6 73 %                                  %% liquid level, filled from the bottom
+level T-7 40 % #ffb74d                          %% with its own colour
+gradient-marks off                              %% hide the readings
+```
+
+- A **reading** goes on the colour scale, blue (cold) through yellow to red (hot); stops
+  without `@NN%` are spread evenly from top to bottom, and the colours blend between them.
+  Readings and colours can be mixed. Stops are separated by commas, so readings use a decimal
+  point.
+- With a **level**, only the liquid is coloured; the surface gets a line and the P&ID ▽.
+- Each reading is written at its height on the inside wall, in black or white for contrast; a
+  reading or level Home Assistant does not have (`unavailable`) shows `?`.
+- In the card the values come from templates, so the tank follows its sensors:
+
+  ```
+  gradient T-1 ${states['sensor.buffer_top']} °C, ${states['sensor.buffer_mid']} °C, ${states['sensor.buffer_bottom']} °C
+  level T-1 ${states['sensor.buffer_level']}
+  ```
+
+![Every gradient and level option](docs/images/gradients.png)
+
+[`examples/gradients.mmd`](examples/gradients.mmd) shows every option;
+[`examples/gradients-no-marks.mmd`](examples/gradients-no-marks.mmd) the same without readings.
+
 ### Colours, icons and images
 
 Mermaid's own styling statements work on equipment and instruments:

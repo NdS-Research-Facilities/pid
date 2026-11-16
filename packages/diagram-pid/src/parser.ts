@@ -13,6 +13,8 @@ import {
   type LineKind,
   type PidModel,
   type Port,
+  type GradientStop,
+  type Level,
   type StreamProperty,
   type ValveKind,
 } from './model.js';
@@ -35,6 +37,15 @@ const IMAGE_MAX = 240;
 const LINK_STYLE = /^linkStyle\s+(default|\d+(?:\s*,\s*\d+)*)\s+(.+)$/;
 /** `pipe <stream tag | A>B> <line number>`: the rest of the line is the number, quotes included. */
 const PIPE = /^pipe\s+(\S+)\s+(.+)$/;
+const GRADIENT = /^gradient\s+([A-Za-z][\w.-]*)\s+(.+)$/;
+const GRADIENT_RANGE = /^gradient-range(?:\s+([A-Za-z][\w.-]*))?\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$/;
+const GRADIENT_MARKS = /^gradient-marks\s+(on|off)$/;
+const LEVEL = /^level\s+([A-Za-z][\w.-]*)\s+(.+)$/;
+/** A colour as a value: `#hex`, `rgb(…)`, `hsl(…)`; checked again when drawn. */
+const COLOUR = /^(#[0-9a-f]{3,8}|(?:rgb|rgba|hsl|hsla)\([^)]*\))$/i;
+const NUMBER = /^-?\d+(?:[.,]\d+)?/;
+/** Equipment that can show a gradient or level. */
+export const FILLABLE = new Set(['tank', 'vessel', 'drum', 'column', 'reactor']);
 const STREAM_PROPS = /^stream\s+("[^"]*"|[^\s{]+)\s*\{(.*)\}$/;
 const ID = /^[A-Za-z][\w.-]*$/;
 /** A line operator with an optional `|label|` straight after it. */
@@ -52,7 +63,16 @@ export function detectPid(text: string): boolean {
 }
 
 export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preprocessed'>): ParseResult<PidModel> {
-  const model: PidModel = { direction: 'LR', equipment: [], streams: [], properties: new Map(), classDefs: new Map() };
+  const model: PidModel = {
+    direction: 'LR',
+    equipment: [],
+    streams: [],
+    properties: new Map(),
+    classDefs: new Map(),
+    gradientRange: [20, 70],
+    gradientMarks: true,
+  };
+  const fills: { id: string; start: number; end: number }[] = [];
   const diagnostics: Diagnostic[] = [];
   const children: AstNode[] = [];
   const byId = new Map<string, Equipment>();
@@ -98,7 +118,24 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
 
     let m: RegExpExecArray | null;
     const size = (v: string | undefined, fallback: number) => Math.min(IMAGE_MAX, Math.max(8, v ? Number(v) : fallback));
-    if ((m = LINK_STYLE.exec(line))) {
+    if ((m = GRADIENT_RANGE.exec(line))) {
+      const range: [number, number] = [Number(m[2]), Number(m[3])];
+      if (range[0] === range[1]) error('gradient-range needs two different numbers', start, end);
+      else if (m[1]) touch(m[1], start, end).gradientRange = range;
+      else model.gradientRange = range;
+      continue;
+    } else if ((m = GRADIENT_MARKS.exec(line))) {
+      model.gradientMarks = m[1] === 'on';
+      continue;
+    } else if ((m = GRADIENT.exec(line))) {
+      touch(m[1]!, start, end).gradient = parseStops(decodeEntities(m[2]!));
+      fills.push({ id: m[1]!, start, end });
+      continue;
+    } else if ((m = LEVEL.exec(line))) {
+      touch(m[1]!, start, end).level = parseLevel(decodeEntities(m[2]!));
+      fills.push({ id: m[1]!, start, end });
+      continue;
+    } else if ((m = LINK_STYLE.exec(line))) {
       linkStyles.push({ refs: m[1]!, decls: declarations(m[2]!), start, end });
       continue;
     } else if ((m = PIPE.exec(line))) {
@@ -189,6 +226,11 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
     if (s.kind === 'signal' && target?.type === 'valve' && target.valveKind !== 'relief') target.actuated = true;
   });
 
+  for (const f of fills) {
+    const eq = byId.get(f.id)!;
+    if (!FILLABLE.has(eq.type))
+      error(`${f.id} is a ${eq.type}: gradient and level work on ${[...FILLABLE].join(', ')}`, f.start, f.end);
+  }
   for (const ls of linkStyles) {
     if (ls.refs === 'default') {
       model.linkStyleDefault = [...(model.linkStyleDefault ?? []), ...ls.decls];
@@ -223,6 +265,41 @@ export function decodeEntities(s: string): string {
   return s.replace(/#(\d+|[a-z]+);/gi, (m, code: string) =>
     /^\d+$/.test(code) ? String.fromCodePoint(Number(code)) : (NAMED[code.toLowerCase()] ?? m),
   );
+}
+
+/** A reading's number, if it starts with one (`62 °C`, `48,5`); else undefined (`unavailable`). */
+function leadingNumber(text: string): number | undefined {
+  const m = NUMBER.exec(text.trim());
+  return m ? Number(m[0].replace(',', '.')) : undefined;
+}
+
+/**
+ * `62 °C, 48 °C @50%, #1565c0`: top to bottom. A stop is a reading or a colour, optionally at a
+ * height from the bottom (`@25%`); stops without one are spread evenly from top to bottom.
+ */
+export function parseStops(text: string): GradientStop[] {
+  const parts = declarations(text);
+  return parts.map((part, i) => {
+    const at = /^(.*?)\s*@\s*(\d+(?:\.\d+)?)\s*%$/.exec(part);
+    const raw = (at ? at[1]! : part).trim();
+    const height = at ? Math.min(1, Math.max(0, Number(at[2]) / 100)) : parts.length === 1 ? 0.5 : 1 - i / (parts.length - 1);
+    if (COLOUR.test(raw)) return { raw, color: raw, height };
+    const value = leadingNumber(raw);
+    return value === undefined ? { raw, height } : { raw, value, height };
+  });
+}
+
+/** `73 %`, `73`, `73% #ffcc80`, `unavailable`. */
+export function parseLevel(text: string): Level {
+  const parts = text.trim().split(/\s+/);
+  const color = parts.length > 1 && COLOUR.test(parts[parts.length - 1]!) ? parts.pop() : undefined;
+  const raw = parts.join(' ');
+  const value = leadingNumber(raw);
+  return {
+    raw,
+    ...(value === undefined ? {} : { percent: Math.min(100, Math.max(0, value)) }),
+    ...(color ? { color } : {}),
+  };
 }
 
 /** Splits `fill:#f9f,stroke:rgb(1,2,3)` at the commas outside parentheses; drops a trailing `;`. */
