@@ -1,6 +1,6 @@
 {
   "name": "@nds/diagram-pid",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Piping and instrumentation diagram (P&ID) plugin for Mermaid v13",
   "type": "module",
   "license": "MIT",
