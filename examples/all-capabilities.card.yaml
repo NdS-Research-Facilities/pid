@@ -71,6 +71,7 @@ content: |
     K-101: compressor "Overheads"
     D-101: drum "Reflux drum"
     V-06: valve plug "Drum drain"
+    actuator V-06 motor
     V-08: valve butterfly "Vent"
 
     %% ── Bottoms: tank, relief, 3-way valves (plain, L-port, T-port) ───────────
@@ -79,6 +80,7 @@ content: |
     PSV-101: valve relief "Relief"
     V3-101: valve3 T "Mixer"
     V3-102: valve3 L "Diverter"
+    actuator V3-102 motor
     V3-103: valve3 "Selector"
     BL-1: block "Filter #40;spare#41;"
 
@@ -132,6 +134,10 @@ content: |
     BL-1 --- FT-104
     R-101 --- AT-106
     TT-101 -.-> TIC-101 -.-> FV-101
+    actuator FV-101 diaphragm
+    XIC-108: instrument dcs "Reflux split"
+    XIC-108 -.-> V3-101
+    XIC-108 = ${states['select.reflux_mode']}
     LT-102 -.-> LIC-102 -.-> V-04
     FT-104 -.- FQI-104
     TT-107 -.-> HP-1
@@ -206,6 +212,21 @@ content: |
     PV-1 ==>|DC| Q-1 ==> INV-1 ==>|AC| M-1 ==> G-1
     INV-1 === BAT-1
     M-1 ==> H-1
+    Q-2: breaker "EV breaker"
+    EV-1: consumer "EV charger"
+    M-1 ==> Q-2 ==> EV-1
+    Q-2 = ${states['switch.ev_breaker']}
+
+    %% ── Coils in the bottoms tank: solar (bottom) and cooling (at 55 %, right wall); a larger reactor ─
+    coil T-101 bottom "Solar coil"
+    coil T-101 @55% right "Cooling coil"
+    CW-1: feed "Cooling water"
+    CW-2: product "Cooling return"
+    SC-1 --> T-101.coil1
+    T-101.coil1 --> D-7
+    CW-1 --> T-101.coil2
+    T-101.coil2 --> CW-2
+    size R-101 1.3
     INV-1 ==> HP-1
     gradient SC-1 ${round(states['sensor.collector_top_temp'], 0)} °C, ${round(states['sensor.collector_bottom_temp'], 0)} °C
     PV-1 = ${round(states['sensor.pv_power'], 1)} kW
@@ -221,6 +242,9 @@ content: |
     level T-101 ${states['sensor.tank_level']}
     gradient C-101 ${round(states['sensor.stripper_top_temp'], 0)} °C, ${round(states['sensor.stripper_bottom_temp'], 0)} °C
     gradient-range 30 100
+    gradient-range C-101 50 100
+    gradient V-201 #b0bec5, rgb(84, 110, 122)
+    level D-101 ${states['sensor.reflux_drum_level']} #a5d6a7
 
     %% ── Colours from live values: alarm above 4.5 bar ──────────────────────────
     classDef ok fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20

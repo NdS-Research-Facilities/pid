@@ -21,7 +21,7 @@ const VALUES: Record<string, [string, Record<string, unknown>?]> = {
   'sensor.preheater_outlet_temp': ['85.3'],
   'sensor.reactor_batch': ['42'],
   'switch.compressor': ['on'],
-  'valve.drum_drain': ['closed'],
+  'valve.drum_drain': ['closing'],
   'valve.vent': ['unavailable'],
   'valve.bottoms': ['open', { current_position: 70 }],
   'binary_sensor.relief_lifted': ['off'],
@@ -57,6 +57,9 @@ const VALUES: Record<string, [string, Record<string, unknown>?]> = {
   'sensor.grid_power': ['-1.1'],
   'sensor.grid_power_abs': ['1.1'],
   'sensor.house_power': ['2.1'],
+  'select.reflux_mode': ['auto'],
+  'switch.ev_breaker': ['off'],
+  'sensor.reflux_drum_level': ['55'],
 };
 
 describe('examples/all-capabilities.card.yaml', () => {
@@ -65,6 +68,26 @@ describe('examples/all-capabilities.card.yaml', () => {
     expect(config.type).toBe('custom:pid-card');
     const used = extractReferencedEntities(config.content);
     expect(used.filter((e: string) => !(e in VALUES))).toEqual([]);
+  });
+
+  it('uses every kind of statement and line the all-capabilities diagram does', () => {
+    const config = parse(readFileSync(file, 'utf8'));
+    const mmd = readFileSync(`${import.meta.dirname}/../../../examples/all-capabilities.mmd`, 'utf8');
+    const kinds = (text: string) => {
+      const found = new Set<string>();
+      for (const raw of text.split('\n')) {
+        const line = raw.trim();
+        if (!line || line.startsWith('%%')) continue;
+        const word = /^(classDef|class|style|linkStyle|pipe|stream|gradient-range|gradient-marks|gradient|level|coil|actuator|size|image|icon|title)\b/.exec(line);
+        if (word) found.add(word[1]!);
+        for (const op of ['-->', '---', '-.->', '-.-', '==>', '===']) if (line.includes(` ${op}`)) found.add(op);
+        const decl = /^[A-Za-z][\w.-]*\s*:\s*([a-z0-9]+)/.exec(line);
+        if (decl) found.add(`type:${decl[1]}`);
+      }
+      return found;
+    };
+    const missing = [...kinds(mmd)].filter((k) => !kinds(config.content).has(k));
+    expect(missing).toEqual([]);
   });
 
   it('renders live values, alarm colours and clickable equipment without errors', async () => {
@@ -98,6 +121,10 @@ describe('examples/all-capabilities.card.yaml', () => {
       expect(svg).toContain('3.4 kW');
       expect(svg).toContain('export 1.1 kW');
       expect(svg).toContain('blade blade-closed');
+      expect(svg).toContain('blade blade-open'); // the EV breaker is off
+      expect(svg.match(/class="coil coil\d"/g)).toHaveLength(2);
+      expect(svg).toContain('55 %');
+      expect(svg).toContain('closing');
       expect(svg).toContain('href="/local/assets/heat-pump.png"');
       expect(svg.match(/class="custom-icon"/g)).toHaveLength(3);
       const clickable = [...root.querySelectorAll('.clickable')].map((el) => el.getAttribute('data-id'));

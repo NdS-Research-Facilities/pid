@@ -30,7 +30,8 @@ pid LR
   V-201: vessel "Knock-out"
   K-101: compressor "Overheads" = running
   D-101: drum "Reflux drum"
-  V-06: valve plug "Drum drain" = closed
+  V-06: valve plug "Drum drain" = closing
+  actuator V-06 motor
   V-08: valve butterfly "Vent" = unavailable
 
   %% ── Bottoms: tank, relief, 3-way valves (plain, L-port, T-port) ───────────
@@ -93,6 +94,9 @@ pid LR
   BL-1 --- FT-104
   R-101 --- AT-106
   TT-101 -.-> TIC-101 -.-> FV-101
+  actuator FV-101 diaphragm
+  XIC-108: instrument dcs "Reflux split" = auto
+  XIC-108 -.-> V3-101
   LT-102 -.-> LIC-102 -.-> V-04
   FT-104 -.- FQI-104
   TT-107 -.-> HP-1
@@ -112,12 +116,20 @@ pid LR
   PV-1 ==>|DC| Q-1 ==> INV-1 ==>|AC| M-1 ==> G-1
   INV-1 === BAT-1
   M-1 ==> H-1
+  Q-2: breaker "EV breaker" = open
+  EV-1: consumer "EV charger"
+  M-1 ==> Q-2 ==> EV-1
   INV-1 ==> HP-1
 
   %% ── A heating coil in the bottoms tank, fed by the solar collector; a larger reactor ─
   coil T-101 bottom "Solar coil"
+  coil T-101 @55% right "Cooling coil"
+  CW-1: feed "Cooling water"
+  CW-2: product "Cooling return"
   SC-1 --> T-101.coil1
   T-101.coil1 --> D-7
+  CW-1 --> T-101.coil2
+  T-101.coil2 --> CW-2
   size R-101 1.3
 
   %% ── Stream property tables, line numbers, line styles ──────────────────────
@@ -151,6 +163,9 @@ pid LR
   gradient T-101 78 °C, 64 °C @50%, 41 °C @10%
   level T-101 73 %
   gradient C-101 96 °C, 58 °C
+  gradient-range C-101 50 100
+  gradient V-201 #b0bec5, rgb(84, 110, 122)
+  level D-101 55 % #a5d6a7
   gradient-range 30 100
 
   %% ── Live state on its own lines (what Home Assistant templates fill in) ────

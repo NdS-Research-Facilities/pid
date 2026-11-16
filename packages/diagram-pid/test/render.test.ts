@@ -214,6 +214,18 @@ describe('all-capabilities example', () => {
     expect(eq.find((e) => e.id === 'AT-106')?.name).toBe('pH (outlet)');
     expect(eq.some((e) => e.gradient) && eq.some((e) => e.level)).toBe(true);
     expect(eq.some((e) => e.coils) && model.streams.some((s) => s.targetCoil !== undefined) && eq.some((e) => e.size)).toBe(true);
+    // The newer statements and their variants, so the example keeps showing all of them.
+    const coils = eq.flatMap((e) => e.coils ?? []);
+    expect(coils.some((c) => c.side) && coils.some((c) => ![0.2, 0.5, 0.8].includes(c.height))).toBe(true);
+    expect(new Set(eq.flatMap((e) => (e.actuator ? [`${e.type}:${e.actuator}`] : [])))).toEqual(
+      new Set(['valve:motor', 'valve:diaphragm', 'valve3:motor']),
+    );
+    expect(eq.some((e) => e.type === 'valve3' && e.actuated && !e.actuator)).toBe(true); // driven by a signal
+    expect(new Set(eq.flatMap((e) => (e.state ? [e.state.kind] : [])))).toEqual(
+      new Set(['position', 'ports', 'opening', 'closing', 'on', 'off', 'unknown', 'text']),
+    );
+    expect(eq.find((e) => e.type === 'breaker' && e.state?.raw === 'open')).toBeDefined();
+    expect(eq.some((e) => e.gradient?.some((st) => st.color)) && eq.some((e) => e.gradientRange) && eq.some((e) => e.level?.color)).toBe(true);
   });
 });
 
