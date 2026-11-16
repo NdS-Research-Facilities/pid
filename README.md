@@ -1,48 +1,101 @@
-# pfd
+# pid
 
-Declarative process flow diagrams (PFDs) for [Mermaid v13](https://mermaid.js.org/intro/v13-alpha.html).
-The PFDs are meant to be shown in a Home Assistant Mermaid card.
+Declarative piping and instrumentation diagrams (P&IDs) for
+[Mermaid v13](https://mermaid.js.org/intro/v13-alpha.html), with live values from Home Assistant.
 
-`@nds/diagram-pfd` is a Mermaid v13 diagram plugin. It reads `pfd` text, lays it out with
-Mermaid's own graph engine and draws equipment symbols, stream tags and stream property tables.
+`@nds/diagram-pid` is a Mermaid v13 diagram plugin. It reads `pid` text, lays it out with
+Mermaid's own graph engine and draws equipment, valves, ISA-5.1 instruments, process lines and
+signal lines. Equipment and instruments carry a state, so a Home Assistant card can fill in live
+values through templates.
 
 ```
-pfd LR
-  title Simple distillation
-  F-1: feed "Crude"
-  T-101: tank "Feed tank"
-  P-101: pump "Feed pump"
-  E-101: exchanger "Preheater"
-  C-101: column "Distillation"
-  D-1: product "Distillate"
-  B-1: product "Bottoms"
+pid LR
+  title Buffer tank temperature control
+  S-1: feed "Steam"
+  TV-101: valve "Steam valve" = 35%
+  T-101: tank "Buffer"
+  P-101: pump "Circulation" = on
+  E-101: exchanger "Heater"
+  D-1: product "To process"
 
-  F-1 --> T-101 -->|1| P-101 -->|2| E-101 -->|3| C-101
-  C-101 -->|4| D-1
-  C-101 -->|5| B-1
+  TT-101: instrument "Buffer temp" = 42.5 °C
+  TIC-101: instrument dcs "Temp control" = SP 45 °C
+  LT-102: instrument "Level" = 73 %
 
-  stream 1 { T: 25 °C, F: 1200 kg/h }
-  stream 3 { T: 95 °C }
+  S-1 --> TV-101 --> E-101
+  T-101 -->|1| P-101 -->|2| E-101 -->|3| D-1
+  T-101 --- TT-101
+  T-101 --- LT-102
+  TT-101 -.-> TIC-101 -.-> TV-101
 ```
 
-## Syntax (v0)
+## Syntax
 
 | Statement | Meaning |
 | --- | --- |
-| `pfd [LR\|RL\|TB\|BT]` | Header and flow direction (default `LR`) |
+| `pid [LR\|RL\|TB\|BT]` | Header and flow direction (default `LR`) |
 | `title Text` | Diagram title |
-| `TAG: type "Name"` | Equipment. Types: `block tank vessel drum column reactor pump compressor exchanger valve feed product` |
-| `A --> B -->\|1\| C` | Streams; `\|1\|` is the stream tag on the line |
+| `TAG: type "Name" = state` | Equipment; name and state optional |
+| `TAG: instrument [location] "Name" = value` | ISA-5.1 instrument; see below |
+| `TAG = state` | Set a state on its own line (handy for templates) |
+| `A --> B -->\|1\| C` | Process line; `\|1\|` is the stream tag |
+| `A --- B` | Instrument connection to the process (thin line) |
+| `A -.-> B`, `A -.- B` | Signal line (dashed), with or without arrow |
 | `stream 1 { T: 25 °C, F: 1200 kg/h }` | Property table shown with stream `1` |
 | `%% comment` | Comment |
+
+**Equipment types:** `block tank vessel drum column reactor pump compressor exchanger valve
+valve3 feed product instrument`.
+
+### Instruments
+
+The tag is drawn inside the bubble, ISA-5.1 style: function letters over the loop number
+(`TIC-101` → `TIC` / `101`). The state is the reading, shown in bold under the bubble.
+`unavailable` or `unknown` shows `?` and a dashed bubble.
+
+| Location | Symbol |
+| --- | --- |
+| `field` (default) | circle |
+| `panel` | circle with a line through it |
+| `dcs` | circle in a square (shared display / control) |
+| `plc` | diamond in a square |
+| `computer` | hexagon |
+
+### Valves
+
+- `valve`: state `open`, `closed`, `opening`, `closing`, a position `0`–`100` (`%` optional), or
+  `unavailable`. Closed is drawn solid, open hollow, partly open shaded; moving or unknown is
+  dashed. A valve that a signal line drives (`TIC-101 -.-> TV-101`) is drawn as a control valve
+  with an actuator, and the signal lands on the actuator.
+- `valve3` (3-way T): ports `A` (inlet), `B` (straight through) and `C` (branch). Lines attach
+  to a port with `V-1.A`. The state lists the connected ports: `AB`, `AC`, `BC`, `ABC` or
+  `closed`. Shut ports are solid, and the process lines on them are dashed.
+
+## Home Assistant
+
+The [ha-mermaid](https://github.com/pajew-ski/ha-mermaid) card fills in `${...}` templates
+before Mermaid sees the text, so states can come from entities:
+
+```yaml
+content: |
+  pid LR
+    TT-101: instrument "Buffer temp"
+    TV-101: valve "Steam valve"
+    ...
+    TT-101 = ${round(states['sensor.buffer_temp'], 1)} °C
+    TV-101 = ${attr('valve.steam', 'current_position')}
+```
+
+That card currently bundles Mermaid v12, which cannot load v13 plugins. Bringing this plugin to
+the dashboard is still open: either a port of the card to v13 or a separate card.
 
 ## Usage
 
 ```js
 import mermaid from 'mermaid'; // 13.0.0-alpha.3
-import { pfd } from '@nds/diagram-pfd';
+import { pid } from '@nds/diagram-pid';
 
-await mermaid.registerExternalDiagrams([pfd]);
+await mermaid.registerExternalDiagrams([pid]);
 const { svg } = await mermaid.render('plant', text);
 ```
 
@@ -52,13 +105,20 @@ Requires Node 20+ and pnpm.
 
 ```sh
 pnpm install
-pnpm test                           # parser tests + Mermaid render, writes out/*.svg
+pnpm test                           # parser tests + Mermaid renders of examples/ to out/*.svg
 node scripts/png.mjs out/*.svg      # PNG previews
 ```
 
 Mermaid v13 is alpha; the version is pinned exactly to `13.0.0-alpha.3`.
 
+### Known issues
+
+- In `TB`/`BT` flows, a line on a 3-way valve's `C` port can be routed from the opposite side
+  and cross other lines.
+- Instruments that tap a pipe (rather than a piece of equipment) are not supported yet.
+
 ## References
 
+- [Piping and instrumentation diagram — Wikipedia](https://en.wikipedia.org/wiki/Piping_and_instrumentation_diagram)
 - [Process flow diagram — Wikipedia](https://en.wikipedia.org/wiki/Process_flow_diagram)
 - [Mermaid v13 alpha](https://mermaid.js.org/intro/v13-alpha.html)

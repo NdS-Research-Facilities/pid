@@ -12,7 +12,7 @@ importers:
         specifier: ^2.6.2
         version: 2.6.2
 
-  packages/diagram-pfd:
+  packages/diagram-pid:
     devDependencies:
       '@mermaid-js/core':
         specifier: 13.0.0-alpha.3

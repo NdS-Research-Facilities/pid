@@ -44,6 +44,11 @@ export function stateText(state: EquipmentState): string {
   }
 }
 
+/** An instrument's reading as written (`42.5 °C`), or `?` when Home Assistant has none. */
+export function instrumentText(state: EquipmentState): string {
+  return state.kind === 'unknown' ? '?' : state.raw;
+}
+
 /**
  * Is `port` of `eq` open? Undefined when the state does not say (no state, travelling, text).
  * A 2-way valve has one implicit port: `port` is ignored.

@@ -1,31 +1,48 @@
 import type { DiagramParseContext } from '@mermaid-js/core';
 import type { AstNode, Diagnostic, ParseResult } from '@mermaid-js/core/parser-kit';
 import type { Dir } from '@mermaid-js/core/layout';
-import { EQUIPMENT_TYPES, type Equipment, type EquipmentType, type PfdModel, type Port, type StreamProperty } from './model.js';
+import {
+  EQUIPMENT_TYPES,
+  INSTRUMENT_LOCATIONS,
+  type Equipment,
+  type EquipmentType,
+  type InstrumentLocation,
+  type LineKind,
+  type PidModel,
+  type Port,
+  type StreamProperty,
+} from './model.js';
 import { parseState } from './state.js';
 
-const HEADER = /^pfd(?:\s+(LR|RL|TB|TD|BT))?\s*$/;
+const HEADER = /^pid(?:\s+(LR|RL|TB|TD|BT))?\s*$/;
 const TITLE = /^title\s+(.+)$/;
-const EQUIPMENT = /^([A-Za-z][\w.-]*)\s*:\s*([A-Za-z][A-Za-z0-9]*)(?:\s+"([^"]*)")?(?:\s*=\s*(.*))?$/;
+/** `TAG: type [location] ["Name"] [= state]` */
+const EQUIPMENT = /^([A-Za-z][\w.-]*)\s*:\s*([A-Za-z][A-Za-z0-9]*)(?:\s+([A-Za-z]+))?(?:\s+"([^"]*)")?(?:\s*=\s*(.*))?$/;
 /** `TAG = value`: a state line, kept apart from the drawing so templates touch only these. */
 const STATE = /^([A-Za-z][\w.-]*)\s*=\s*(.*)$/;
 const STREAM_PROPS = /^stream\s+("[^"]*"|[^\s{]+)\s*\{(.*)\}$/;
 const ID = /^[A-Za-z][\w.-]*$/;
-/** `-->` with an optional `|label|` straight after it. */
-const ARROW = /\s*-->(?:\|([^|]*)\|)?\s*/;
+/** A line operator with an optional `|label|` straight after it. */
+const LINK = /\s*(-->|---|-\.->|-\.-)(?:\|([^|]*)\|)?\s*/;
+const LINK_KIND: Record<string, [LineKind, boolean]> = {
+  '-->': ['process', true],
+  '---': ['connection', false],
+  '-.->': ['signal', true],
+  '-.-': ['signal', false],
+};
 
-/** True when the diagram text (front matter and comments removed) starts with `pfd`. */
-export function detectPfd(text: string): boolean {
-  return /^\s*pfd\b/.test(text);
+/** True when the diagram text (front matter and comments removed) starts with `pid`. */
+export function detectPid(text: string): boolean {
+  return /^\s*pid\b/.test(text);
 }
 
-export function parsePfd(text: string, ctx?: Pick<DiagramParseContext, 'preprocessed'>): ParseResult<PfdModel> {
-  const model: PfdModel = { direction: 'LR', equipment: [], streams: [], properties: new Map() };
+export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preprocessed'>): ParseResult<PidModel> {
+  const model: PidModel = { direction: 'LR', equipment: [], streams: [], properties: new Map() };
   const diagnostics: Diagnostic[] = [];
   const children: AstNode[] = [];
   const byId = new Map<string, Equipment>();
   const error = (message: string, start: number, end: number) =>
-    diagnostics.push({ severity: 'error', code: 'PFD_SYNTAX', message, range: { start, end } });
+    diagnostics.push({ severity: 'error', code: 'PID_SYNTAX', message, range: { start, end } });
 
   const touch = (id: string, start: number, end: number): Equipment => {
     let eq = byId.get(id);
@@ -53,7 +70,7 @@ export function parsePfd(text: string, ctx?: Pick<DiagramParseContext, 'preproce
     if (!sawHeader) {
       const m = HEADER.exec(line);
       if (!m) {
-        error('Expected "pfd" followed by an optional direction (LR, RL, TB, BT)', start, end);
+        error('Expected "pid" followed by an optional direction (LR, RL, TB, BT)', start, end);
         break;
       }
       model.direction = (m[1] === 'TD' ? 'TB' : (m[1] ?? 'LR')) as Dir;
@@ -66,38 +83,46 @@ export function parsePfd(text: string, ctx?: Pick<DiagramParseContext, 'preproce
       model.title = m[1]!.trim();
     } else if ((m = STREAM_PROPS.exec(line))) {
       model.properties.set(unquote(m[1]!), parseProperties(m[2]!));
-    } else if (line.includes('-->')) {
-      const parts = line.split(ARROW);
-      // split with one capture group: [id, label, id, label, id, ...]
-      const ids = parts.filter((_, i) => i % 2 === 0).map((s) => s.trim());
+    } else if ((m = STATE.exec(line))) {
+      touch(m[1]!, start, end).state = parseState(m[2]!);
+    } else if (LINK.test(line)) {
+      // split with two capture groups: [id, op, label, id, op, label, id, ...]
+      const parts = line.split(LINK);
+      const ids = parts.filter((_, i) => i % 3 === 0).map((s) => s.trim());
       if (ids.some((id) => !ID.test(id))) {
-        error('Expected equipment tags around "-->", e.g. "P-101 -->|2| E-101"', start, end);
+        error('Expected tags around a line, e.g. "P-101 -->|2| E-101" or "TT-101 -.-> TIC-101"', start, end);
         continue;
       }
       for (let i = 0; i + 1 < ids.length; i++) {
-        const label = parts[2 * i + 1]?.trim() || undefined;
+        const [kind, arrow] = LINK_KIND[parts[3 * i + 1]!]!;
+        const label = parts[3 * i + 2]?.trim() || undefined;
         const id = `s${model.streams.length}`;
         // Endpoints are resolved after every declaration is read: `V-1.C` is a port only when
         // `V-1` is a 3-way valve, declared before or after the stream.
-        model.streams.push({ id, source: ids[i]!, target: ids[i + 1]!, label, ast: `edge-${id}` });
+        model.streams.push({ id, kind, arrow, source: ids[i]!, target: ids[i + 1]!, label, ast: `edge-${id}` });
         children.push({ id: `edge-${id}`, type: 'stream', range: { start, end } });
         ranges.push({ start, end });
       }
-    } else if ((m = STATE.exec(line))) {
-      touch(m[1]!, start, end).state = parseState(m[2]!);
     } else if ((m = EQUIPMENT.exec(line))) {
-      const [, id, type, name, state] = m;
+      const [, id, type, location, name, state] = m;
       const known = (EQUIPMENT_TYPES as readonly string[]).includes(type!.toLowerCase());
       if (!known) error(`Unknown equipment type "${type}". Known: ${EQUIPMENT_TYPES.join(', ')}`, start, end);
       const eq = touch(id!, start, end);
       eq.type = known ? (type!.toLowerCase() as EquipmentType) : 'block';
+      if (location !== undefined) {
+        const loc = location.toLowerCase();
+        if (eq.type !== 'instrument') error(`Only instruments take a location; "${location}" on a ${eq.type}`, start, end);
+        else if (!(INSTRUMENT_LOCATIONS as readonly string[]).includes(loc))
+          error(`Unknown instrument location "${location}". Known: ${INSTRUMENT_LOCATIONS.join(', ')}`, start, end);
+        else eq.location = loc as InstrumentLocation;
+      }
       if (name !== undefined) eq.name = name;
       if (state !== undefined) eq.state = parseState(state);
     } else {
       error(`Cannot read "${line}"`, start, end);
     }
   }
-  if (!sawHeader && diagnostics.length === 0) error('Expected "pfd"', 0, text.length);
+  if (!sawHeader && diagnostics.length === 0) error('Expected "pid"', 0, text.length);
 
   model.streams.forEach((s, i) => {
     const { start, end } = ranges[i]!;
@@ -108,9 +133,11 @@ export function parsePfd(text: string, ctx?: Pick<DiagramParseContext, 'preproce
     };
     [s.source, s.sourcePort] = resolve(s.source);
     [s.target, s.targetPort] = resolve(s.target);
+    const target = byId.get(s.target);
+    if (s.kind === 'signal' && target?.type === 'valve') target.actuated = true;
   });
 
-  const ast: AstNode = { id: 'root', type: 'pfd', range: { start: 0, end: text.length }, children };
+  const ast: AstNode = { id: 'root', type: 'pid', range: { start: 0, end: text.length }, children };
   return { model, ast, diagnostics, symbols: [], statements: [] };
 }
 

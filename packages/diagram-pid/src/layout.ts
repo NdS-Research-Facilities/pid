@@ -1,9 +1,9 @@
 import type { RenderContext } from '@mermaid-js/core';
 import type { Dir, LayoutEdge, LayoutModel, LayoutNode, Side } from '@mermaid-js/core/layout';
 import { layoutLabel, Style, type FontKey, type MeasuredLabel } from '@mermaid-js/core/text';
-import type { Equipment, PfdModel, Port } from './model.js';
-import { stateText } from './state.js';
-import { SYMBOLS } from './symbols.js';
+import type { Equipment, PidModel, Port } from './model.js';
+import { instrumentText, stateText } from './state.js';
+import { splitTag, symbolFor } from './symbols.js';
 
 export const LABEL_GAP = 6;
 export const ARROW = { length: 8, width: 7 };
@@ -13,10 +13,15 @@ const BOX_PAD = 8;
 export type LabelSide = 'below' | 'above' | 'left' | 'right';
 
 export interface NodeLabels {
-  tag: MeasuredLabel;
+  /** Absent for instruments: their tag is inside the bubble. */
+  tag?: MeasuredLabel;
   name?: MeasuredLabel;
   state?: MeasuredLabel;
-  /** The tag, name and state lines stacked. */
+  /** An instrument's measured value: shown first, larger than the name. */
+  value?: MeasuredLabel;
+  /** An instrument's function letters and loop number, inside the bubble. */
+  bubble?: { letters: MeasuredLabel; loop: MeasuredLabel; size: number };
+  /** The tag, value, name and state lines stacked. */
   width: number;
   height: number;
 }
@@ -41,11 +46,14 @@ export interface EdgeLabel {
   height: number;
 }
 
-export interface PfdLayout extends LayoutModel {
+export interface PidLayout extends LayoutModel {
   placements: Map<string, NodePlacement>;
   edgeLabels: Map<string, EdgeLabel>;
   fontSize: number;
 }
+
+/** A font size that fits `letters` across an instrument bubble. */
+const size0 = (letters: string) => (letters.length <= 3 ? 11 : letters.length === 4 ? 9 : 8);
 
 const vertical = (d: Dir) => d === 'TB' || d === 'BT';
 
@@ -57,6 +65,11 @@ function labelSide(dir: Dir, eq: Equipment): LabelSide {
   if (dir === 'BT' && eq.type === 'valve3') return 'left';
   if (vertical(dir)) return 'right';
   return eq.type === 'valve3' ? 'above' : 'below';
+}
+
+/** The side a control valve's actuator faces: up, or the way a vertical flow turns it. */
+export function actuatorSide(dir: Dir): Side {
+  return dir === 'TB' ? 'right' : dir === 'BT' ? 'left' : 'top';
 }
 
 /** The box side each 3-way valve port faces: A upstream, B downstream, C across the flow. */
@@ -81,7 +94,7 @@ function fontSizeOf(ctx: RenderContext): number {
 }
 
 /** Measures every label, then hands boxes and streams to the configured graph layout engine. */
-export function layoutPfd(model: PfdModel, ctx: RenderContext): PfdLayout {
+export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
   const size = fontSizeOf(ctx);
   const family = ctx.theme.value('fontFamily');
   const font: FontKey = { family, size, weight: 400 };
@@ -89,18 +102,31 @@ export function layoutPfd(model: PfdModel, ctx: RenderContext): PfdLayout {
   const measure = (text: string, f: FontKey, style = 0) =>
     layoutLabel(text, f, Infinity, ctx.measurer, { style, keepWords: true });
 
+  const byId = new Map(model.equipment.map((e) => [e.id, e]));
   const placements = new Map<string, NodePlacement>();
   const nodes: LayoutNode[] = model.equipment.map((eq) => {
-    const sym = SYMBOLS[eq.type];
-    const tag = measure(eq.id, font, Style.Bold);
+    const sym = symbolFor(eq);
+    const instrument = eq.type === 'instrument';
+    const tag = instrument ? undefined : measure(eq.id, font, Style.Bold);
+    const value = instrument && eq.state ? measure(instrumentText(eq.state), font, Style.Bold) : undefined;
     const name = eq.name ? measure(eq.name, small) : undefined;
-    const state = eq.state ? measure(stateText(eq.state), small, Style.Italic) : undefined;
-    const lines = [tag, name, state].filter((l): l is MeasuredLabel => l !== undefined);
+    const state = !instrument && eq.state ? measure(stateText(eq.state), small, Style.Italic) : undefined;
+    const lines = [tag, value, name, state].filter((l): l is MeasuredLabel => l !== undefined);
+    let bubble: NodeLabels['bubble'];
+    if (instrument) {
+      const [letters, loop] = splitTag(eq.id);
+      // ISA-5.1 bubbles hold up to four letters; a smaller face keeps longer ones inside.
+      const fs = Math.max(7, Math.min(size0(letters), size - 2));
+      const f = { ...font, size: fs };
+      bubble = { letters: measure(letters, f, Style.Bold), loop: measure(loop, f), size: fs };
+    }
     const labels: NodeLabels = {
       tag,
+      value,
       name,
       state,
-      width: Math.max(...lines.map((l) => l.width)),
+      bubble,
+      width: Math.max(0, ...lines.map((l) => l.width)),
       height: lines.reduce((h, l) => h + l.height, 0),
     };
     const turn = !sym.turns || !vertical(model.direction) ? 0 : model.direction === 'TB' ? 90 : -90;
@@ -121,11 +147,13 @@ export function layoutPfd(model: PfdModel, ctx: RenderContext): PfdLayout {
 
   const edgeLabels = new Map<string, EdgeLabel>();
   const edges: LayoutEdge[] = model.streams.map((s) => {
-    const edge: LayoutEdge = { id: s.id, source: s.source, target: s.target, minLen: 1, endMarker: ARROW };
-    if (s.sourcePort || s.targetPort)
+    const edge: LayoutEdge = { id: s.id, source: s.source, target: s.target, minLen: 1 };
+    if (s.arrow) edge.endMarker = ARROW;
+    const actuator = s.kind === 'signal' && byId.get(s.target)?.actuated;
+    if (s.sourcePort || s.targetPort || actuator)
       edge.sides = {
         source: s.sourcePort && portSide(model.direction, s.sourcePort),
-        target: s.targetPort && portSide(model.direction, s.targetPort),
+        target: actuator ? actuatorSide(model.direction) : s.targetPort && portSide(model.direction, s.targetPort),
       };
     if (s.label !== undefined) {
       const props = model.properties.get(s.label) ?? [];

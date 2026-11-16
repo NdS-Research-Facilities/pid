@@ -1,7 +1,7 @@
 {
-  "name": "@nds/diagram-pfd",
+  "name": "@nds/diagram-pid",
   "version": "0.0.1",
-  "description": "Process flow diagram (PFD) plugin for Mermaid v13",
+  "description": "Piping and instrumentation diagram (P&ID) plugin for Mermaid v13",
   "type": "module",
   "license": "MIT",
   "exports": {
@@ -18,14 +18,14 @@
   },
   "mermaid": {
     "plugin": "diagram",
-    "id": "pfd",
+    "id": "pid",
     "types": [
-      "pfd"
+      "pid"
     ],
     "formats": [
       "svg"
     ],
-    "export": "pfd"
+    "export": "pid"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

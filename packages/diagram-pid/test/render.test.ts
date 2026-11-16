@@ -1,15 +1,15 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createMermaid } from 'mermaid';
 import { describe, expect, it } from 'vitest';
-import { parsePfd, parseState, pfd } from '../src/index.js';
+import { parsePid, parseState, pid } from '../src/index.js';
 
 const examplesDir = new URL('../../../examples/', import.meta.url);
 const read = (name: string) => readFileSync(new URL(name, examplesDir), 'utf8');
 const example = read('distillation.mmd');
 
-describe('parsePfd', () => {
+describe('parsePid', () => {
   it('reads equipment, streams and stream properties', () => {
-    const { model, diagnostics } = parsePfd(example);
+    const { model, diagnostics } = parsePid(example);
     expect(diagnostics).toEqual([]);
     expect(model.direction).toBe('LR');
     expect(model.title).toBe('Simple distillation');
@@ -26,7 +26,7 @@ describe('parsePfd', () => {
   });
 
   it('reports unknown equipment types and bad lines', () => {
-    const { diagnostics } = parsePfd('pfd\n  X-1: spaceship\n  ???\n');
+    const { diagnostics } = parsePid('pid\n  X-1: spaceship\n  ???\n');
     expect(diagnostics.map((d) => d.message)).toEqual([
       expect.stringContaining('Unknown equipment type "spaceship"'),
       expect.stringContaining('Cannot read "???"'),
@@ -54,7 +54,7 @@ describe('equipment state', () => {
   });
 
   it('attaches streams to 3-way valve ports and states to equipment', () => {
-    const { model, diagnostics } = parsePfd(read('valves.mmd'));
+    const { model, diagnostics } = parsePid(read('valves.mmd'));
     expect(diagnostics).toEqual([]);
     const v = model.equipment.find((e) => e.id === 'V-102')!;
     expect(v.type).toBe('valve3');
@@ -66,28 +66,59 @@ describe('equipment state', () => {
   });
 });
 
+describe('instruments', () => {
+  it('reads instruments, their locations, values and line kinds', () => {
+    const { model, diagnostics } = parsePid(read('instruments.mmd'));
+    expect(diagnostics).toEqual([]);
+    const tic = model.equipment.find((e) => e.id === 'TIC-101')!;
+    expect(tic).toMatchObject({ type: 'instrument', location: 'dcs', name: 'Temp control' });
+    expect(tic.state?.raw).toBe('SP 45 °C');
+    expect(model.equipment.find((e) => e.id === 'TT-101')?.location).toBeUndefined();
+    const kinds = model.streams.map((s) => `${s.source}${s.kind === 'process' ? '>' : s.kind === 'connection' ? '-' : '~'}${s.target}${s.arrow ? '' : '|'}`);
+    expect(kinds).toContain('T-101-TT-101|');
+    expect(kinds).toContain('TT-101~TIC-101');
+    expect(kinds).toContain('TIC-101~TV-101');
+    expect(kinds).toContain('S-1>TV-101');
+  });
+
+  it('rejects locations on equipment and unknown locations', () => {
+    const { diagnostics } = parsePid('pid\n  P-1: pump dcs\n  TT-1: instrument somewhere\n  A -.- B');
+    expect(diagnostics.map((d) => d.message)).toEqual([
+      expect.stringContaining('Only instruments take a location'),
+      expect.stringContaining('Unknown instrument location "somewhere"'),
+    ]);
+  });
+});
+
 describe('Mermaid v13 integration', () => {
-  it('detects and renders a pfd to SVG', async () => {
+  it('detects and renders a pid to SVG', async () => {
     const mermaid = createMermaid();
-    await mermaid.registerExternalDiagrams([pfd]);
-    expect(mermaid.detectType(example)).toBe('pfd');
-    const { svg } = await mermaid.render('pfd1', example);
-    expect(svg).toContain('mermaid-pfd');
+    await mermaid.registerExternalDiagrams([pid]);
+    expect(mermaid.detectType(example)).toBe('pid');
+    const { svg } = await mermaid.render('pid1', example);
+    expect(svg).toContain('mermaid-pid');
     for (const tag of ['T-101', 'P-101', 'C-101', '1200 kg/h']) expect(svg).toContain(tag);
   });
 
   it('renders every example, marking shut ports and blocked streams', async () => {
     const mermaid = createMermaid();
-    await mermaid.registerExternalDiagrams([pfd]);
+    await mermaid.registerExternalDiagrams([pid]);
     const out = new URL('../../../out/', import.meta.url);
     mkdirSync(out, { recursive: true });
     for (const file of readdirSync(examplesDir).filter((f) => f.endsWith('.mmd') && !f.startsWith('.'))) {
       const { svg } = await mermaid.render(file.replace(/\W/g, '-'), read(file));
       writeFileSync(new URL(file.replace(/\.mmd$/, '.svg'), out), svg);
+      if (file === 'instruments.mmd') {
+        expect(svg).toContain('instrument-letters');
+        for (const t of ['TIC', 'FQI', '42.5 °C', 'SP 45 °C', '1284 m³']) expect(svg).toContain(t);
+        expect(svg).toMatch(/class="equipment instrument state-unknown"/); // PT-103 unavailable
+        expect(svg.match(/class="stream signal"/g)).toHaveLength(2);
+        expect(svg.match(/class="stream connection"/g)).toHaveLength(4);
+      }
       if (file === 'valves.mmd') {
         expect(svg).toContain('port-C port-shut');
         expect(svg).toContain('state-closed');
-        expect(svg.match(/stream stream-blocked/g)).toHaveLength(3); // V-102.C→, →V-103, V-103→
+        expect(svg.match(/stream process stream-blocked/g)).toHaveLength(3); // V-102.C→, →V-103, V-103→
       }
     }
   });

@@ -1,4 +1,4 @@
-import type { EquipmentType, Port } from './model.js';
+import type { Equipment, EquipmentType, InstrumentLocation, Port } from './model.js';
 
 export interface SymbolPart {
   tag: 'path' | 'circle' | 'rect';
@@ -14,6 +14,8 @@ export interface SymbolDef {
   height: number;
   /** Drawn along the flow: turned a quarter when the diagram runs vertically. */
   turns?: boolean;
+  /** A circle of this radius around the centre: lines may meet it off-centre. */
+  round?: number;
   /** Parts in local coordinates, origin at the symbol's top-left corner. */
   parts: SymbolPart[];
 }
@@ -32,7 +34,7 @@ function capsule(w: number, h: number): string {
 }
 
 /**
- * Simplified PFD symbols, loosely after ISO 10628 / ISA 5.1. Sizes are in px; the layout adds
+ * Simplified P&ID symbols, loosely after ISO 10628 / ISA 5.1. Sizes are in px; the layout adds
  * the tag label underneath.
  */
 export const SYMBOLS: Record<EquipmentType, SymbolDef> = {
@@ -56,12 +58,14 @@ export const SYMBOLS: Record<EquipmentType, SymbolDef> = {
   pump: {
     width: 48,
     height: 48,
+    round: 22,
     parts: [{ tag: 'circle', attrs: { cx: 24, cy: 24, r: 22 }, fill: true }, line('M24 2 H46 M8 40 L2 48 H46 L40 40')],
   },
   compressor: { width: 60, height: 48, parts: [shape('M0 0 L60 12 V36 L0 48 Z')] },
   exchanger: {
     width: 56,
     height: 56,
+    round: 26,
     parts: [{ tag: 'circle', attrs: { cx: 28, cy: 28, r: 26 }, fill: true }, line('M2 28 L12 28 L18 14 L28 42 L38 14 L44 28 L54 28')],
   },
   valve: { width: 36, height: 24, turns: true, parts: [shape('M0 0 L36 24 V0 L0 24 Z')] },
@@ -77,6 +81,57 @@ export const SYMBOLS: Record<EquipmentType, SymbolDef> = {
       { ...shape('M18 22 L6 44 H30 Z'), port: 'C' },
     ],
   },
+  instrument: { width: 42, height: 42, parts: [{ tag: 'circle', attrs: { cx: 21, cy: 21, r: 20 }, fill: true }] },
   feed: { width: 70, height: 30, parts: [shape('M0 0 H55 L70 15 L55 30 H0 Z')] },
   product: { width: 70, height: 30, parts: [shape('M0 0 H55 L70 15 L55 30 H0 Z')] },
 };
+
+/** Instrument bubble diameter; the square of `dcs` and `plc` is the same size. */
+export const BUBBLE = 42;
+const R = BUBBLE / 2;
+const circle: SymbolPart = { tag: 'circle', attrs: { cx: R, cy: R, r: R - 1 }, fill: true };
+const square: SymbolPart = { tag: 'rect', attrs: { x: 0, y: 0, width: BUBBLE, height: BUBBLE }, fill: true };
+
+/** ISA-5.1 instrument symbols by location. */
+const INSTRUMENTS: Record<InstrumentLocation, SymbolDef> = {
+  field: { width: BUBBLE, height: BUBBLE, round: R - 1, parts: [circle] },
+  panel: { width: BUBBLE, height: BUBBLE, round: R - 1, parts: [circle, line(`M1 ${R} H${BUBBLE - 1}`)] },
+  dcs: { width: BUBBLE, height: BUBBLE, parts: [square, { ...circle, fill: false }] },
+  plc: { width: BUBBLE, height: BUBBLE, parts: [square, line(`M${R} 0 L${BUBBLE} ${R} L${R} ${BUBBLE} L0 ${R} Z`)] },
+  computer: {
+    width: BUBBLE,
+    height: BUBBLE,
+    parts: [shape(`M0 ${R} L${R / 2} 1 H${BUBBLE - R / 2} L${BUBBLE} ${R} L${BUBBLE - R / 2} ${BUBBLE - 1} H${R / 2} Z`)],
+  },
+};
+
+/**
+ * A control valve: the valve body with a stem and a diaphragm actuator above it. The space below
+ * the body mirrors the actuator, so the body stays at the symbol's centre on the process line.
+ */
+const ACTUATED_VALVE: SymbolDef = {
+  width: 36,
+  height: 68,
+  turns: true,
+  parts: [
+    shape('M0 22 L36 46 V22 L0 46 Z'),
+    line('M18 34 V12'),
+    line('M6 12 A12 11 0 0 1 30 12 Z'),
+  ],
+};
+
+/** The symbol drawn for `eq`. */
+export function symbolFor(eq: Pick<Equipment, 'type' | 'location' | 'actuated'>): SymbolDef {
+  if (eq.type === 'instrument') return INSTRUMENTS[eq.location ?? 'field'];
+  if (eq.type === 'valve' && eq.actuated) return ACTUATED_VALVE;
+  return SYMBOLS[eq.type];
+}
+
+/**
+ * An instrument tag split as ISA-5.1 draws it: the function letters (`TIC`) over the loop
+ * number (`101`). Tags without a number keep everything on the first line.
+ */
+export function splitTag(tag: string): [letters: string, loop: string] {
+  const m = /^([A-Za-z]+)[-\s]?(\d.*)$/.exec(tag);
+  return m ? [m[1]!.toUpperCase(), m[2]!] : [tag, ''];
+}

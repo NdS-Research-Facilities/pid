@@ -1,0 +1,25 @@
+pid LR
+  title Buffer tank temperature control
+  S-1: feed "Steam"
+  TV-101: valve "Steam valve" = 35%
+  T-101: tank "Buffer"
+  P-101: pump "Circulation" = on
+  E-101: exchanger "Heater"
+  D-1: product "To process"
+
+  %% Instruments: ISA-5.1 tag, location, name, live value
+  TT-101: instrument "Buffer temp" = 42.5 °C
+  TIC-101: instrument dcs "Temp control" = SP 45 °C
+  LT-102: instrument "Level" = 73 %
+  PT-103: instrument "Discharge" = unavailable
+  FQI-104: instrument panel "Flow total" = 1284 m³
+
+  S-1 --> TV-101 --> E-101
+  T-101 -->|1| P-101 -->|2| E-101 -->|3| D-1
+
+  %% Process connections (thin) and signals (dashed)
+  T-101 --- TT-101
+  T-101 --- LT-102
+  P-101 --- PT-103
+  E-101 --- FQI-104
+  TT-101 -.-> TIC-101 -.-> TV-101

@@ -3,16 +3,20 @@ import type { Point } from '@mermaid-js/core/layout';
 import type { PathData, SafeValue, SvgWriter } from '@mermaid-js/core/svg';
 import { pathBuilder, px, rotate, styleScope, styleText, themeStyleSheet, transforms, translate } from '@mermaid-js/core/svg';
 import type { MeasuredLabel } from '@mermaid-js/core/text';
-import type { Dir, LayoutModelNode, Side } from '@mermaid-js/core/layout';
-import { ARROW, LABEL_GAP, portSide, type NodePlacement, type PfdLayout } from './layout.js';
-import type { Equipment, EquipmentType, PfdModel, Port, Stream } from './model.js';
+import type { LayoutModelNode, Side } from '@mermaid-js/core/layout';
+import { actuatorSide, ARROW, LABEL_GAP, portSide, type NodePlacement, type PidLayout } from './layout.js';
+import type { Equipment, EquipmentType, PidModel, Stream } from './model.js';
 import { portOpen } from './state.js';
-import { SYMBOLS, type SymbolPart } from './symbols.js';
+import { symbolFor, type SymbolPart } from './symbols.js';
 
 const DASH = '4 3' as SafeValue;
+const SIGNAL_DASH = '7 3' as SafeValue;
 
-/** Writes the whole `<svg>` document for a laid-out PFD. */
-export function renderPfd(model: PfdModel, layout: PfdLayout, ctx: RenderContext, w: SvgWriter): void {
+/** Line weights: process piping heavy, instrument connections and signals light. */
+const WEIGHT = { process: 1.6, connection: 1, signal: 1 } as const;
+
+/** Writes the whole `<svg>` document for a laid-out P&ID. */
+export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext, w: SvgWriter): void {
   const { theme, idPrefix } = ctx;
   const paint = {
     line: theme.color('lineColor'),
@@ -27,11 +31,11 @@ export function renderPfd(model: PfdModel, layout: PfdLayout, ctx: RenderContext
   const auto = theme.autoDeclarations();
   w.open('svg', {
     xmlns: 'http://www.w3.org/2000/svg',
-    class: 'mermaid mermaid-pfd',
+    class: 'mermaid mermaid-pid',
     viewBox: [0, 0, width, height],
     width: '100%',
     role: 'img',
-    'aria-roledescription': 'pfd',
+    'aria-roledescription': 'pid',
     'aria-labelledby': model.title ? `${idPrefix}-title` : undefined,
     'data-mermaid-version': ctx.version,
     'data-p': auto ? styleScope(idPrefix) : undefined,
@@ -53,19 +57,22 @@ export function renderPfd(model: PfdModel, layout: PfdLayout, ctx: RenderContext
     const edge = layout.edges.get(s.id);
     if (!edge || edge.points.length < 2) continue;
     const pts = edge.points.map((p) => ({ x: p.x, y: p.y }));
-    attach(pts, false, model.direction, layout, byId.get(s.source), s.sourcePort);
-    attach(pts, true, model.direction, layout, byId.get(s.target), s.targetPort);
-    const blocked = isBlocked(s, byId);
-    w.open('g', { class: blocked ? 'stream stream-blocked' : 'stream', 'data-id': s.ast });
+    const target = byId.get(s.target);
+    const toActuator = s.kind === 'signal' && !!target?.actuated;
+    attach(pts, false, layout, byId.get(s.source), s.sourcePort && portSide(model.direction, s.sourcePort));
+    attach(pts, true, layout, target, toActuator ? actuatorSide(model.direction) : s.targetPort && portSide(model.direction, s.targetPort));
+    const blocked = s.kind === 'process' && isBlocked(s, byId);
+    w.open('g', { class: `stream ${s.kind}${blocked ? ' stream-blocked' : ''}`, 'data-id': s.ast });
     w.leaf('path', {
       d: polyline(pts),
       fill: 'none',
       stroke: paint.line,
-      'stroke-width': 1.6,
-      'stroke-dasharray': blocked ? DASH : undefined,
+      'stroke-width': WEIGHT[s.kind],
+      'stroke-dasharray': s.kind === 'signal' ? SIGNAL_DASH : blocked ? DASH : undefined,
       'stroke-opacity': blocked ? 0.55 : undefined,
     });
-    w.leaf('path', { d: arrowHead(pts[pts.length - 2]!, pts[pts.length - 1]!), fill: paint.line, stroke: 'none' });
+    if (s.arrow)
+      w.leaf('path', { d: arrowHead(pts[pts.length - 2]!, pts[pts.length - 1]!), fill: paint.line, stroke: 'none' });
     const lbl = layout.edgeLabels.get(s.id);
     if (lbl && edge.label) {
       w.leaf('rect', {
@@ -90,7 +97,7 @@ export function renderPfd(model: PfdModel, layout: PfdLayout, ctx: RenderContext
     const node = layout.nodes.get(eq.id);
     const place = layout.placements.get(eq.id);
     if (!node || !place) continue;
-    const sym = SYMBOLS[eq.type];
+    const sym = symbolFor(eq);
     const left = node.x - place.width / 2;
     const top = node.y - place.height / 2;
     const look = stateLook(eq);
@@ -105,6 +112,7 @@ export function renderPfd(model: PfdModel, layout: PfdLayout, ctx: RenderContext
     });
     for (const part of sym.parts) drawPart(w, part, eq, look, paint);
     w.close();
+    if (place.labels.bubble) drawBubble(w, place.labels.bubble, node, paint.text);
     drawLabels(w, layout, node, place, paint.text);
     w.close();
   }
@@ -132,8 +140,15 @@ function drawPart(w: SvgWriter, part: SymbolPart, eq: Equipment, look: StateLook
   });
 }
 
+/** ISA-5.1: function letters in the bubble's upper half, the loop number in the lower half. */
+function drawBubble(w: SvgWriter, b: NonNullable<NodePlacement['labels']['bubble']>, node: Point, text: Paint['text']): void {
+  const shift = b.size * 0.6;
+  w.label(b.letters, node.x, node.y - shift, { class: 'instrument-letters', fill: text, 'font-size': b.size, 'font-weight': 'bold' });
+  if (b.loop.width > 0) w.label(b.loop, node.x, node.y + shift, { class: 'instrument-loop', fill: text, 'font-size': b.size });
+}
+
 /** Tag (bold), name and state (italic), centred in a column on the placement's label side. */
-function drawLabels(w: SvgWriter, layout: PfdLayout, node: Point, place: NodePlacement, text: Paint['text']): void {
+function drawLabels(w: SvgWriter, layout: PidLayout, node: Point, place: NodePlacement, text: Paint['text']): void {
   const { labels, side } = place;
   const fs = layout.fontSize;
   let cx = node.x;
@@ -147,12 +162,13 @@ function drawLabels(w: SvgWriter, layout: PfdLayout, node: Point, place: NodePla
     y += l.height;
   };
   line(labels.tag, { 'font-size': fs, 'font-weight': 'bold' });
+  line(labels.value, { class: 'instrument-value', 'font-size': fs, 'font-weight': 'bold' });
   line(labels.name, { 'font-size': fs - 2 });
   line(labels.state, { class: 'equipment-state', 'font-size': fs - 2, 'font-style': 'italic' });
 }
 
 /** Compact symbols are met on their centre line; tall or wide ones anywhere near it. */
-const CENTRED: ReadonlySet<EquipmentType> = new Set(['pump', 'compressor', 'exchanger', 'valve', 'valve3', 'feed', 'product']);
+const CENTRED: ReadonlySet<EquipmentType> = new Set(['pump', 'compressor', 'exchanger', 'valve', 'valve3', 'feed', 'product', 'instrument']);
 /** Keep stream ends this far from a symbol's corners. */
 const CORNER = 20;
 /** How far outside the box a stream turns to line up with the symbol. */
@@ -163,14 +179,13 @@ const STUB = 10;
  * hold the labels. Moves the end (`atEnd`) or the start of `pts` onto the symbol: straight on
  * when it already lines up, else with a jog just outside the box. A port end meets its port.
  */
-function attach(pts: Point[], atEnd: boolean, dir: Dir, layout: PfdLayout, eq: Equipment | undefined, port: Port | undefined): void {
+function attach(pts: Point[], atEnd: boolean, layout: PidLayout, eq: Equipment | undefined, side: Side | undefined): void {
   const node = eq && layout.nodes.get(eq.id);
   const place = eq && layout.placements.get(eq.id);
   if (!eq || !node || !place || pts.length < 2) return;
   const i = atEnd ? pts.length - 1 : 0;
   const E = pts[i]!;
   const P = pts[atEnd ? i - 1 : 1]!;
-  const side: Side | undefined = port && portSide(dir, port);
   const across = side ? side === 'left' || side === 'right' : Math.abs(E.y - P.y) < 0.5;
   // u runs along the stream's way in, v across it.
   const U = (p: Point) => (across ? p.x : p.y);
@@ -180,9 +195,12 @@ function attach(pts: Point[], atEnd: boolean, dir: Dir, layout: PfdLayout, eq: E
   const symU = (across ? place.width : place.height) / 2;
   const symV = (across ? place.height : place.width) / 2;
   const boxU = (across ? (node as LayoutModelNode).width : (node as LayoutModelNode).height) / 2;
-  const reach = port || CENTRED.has(eq.type) ? 0 : Math.max(0, symV - CORNER);
+  const round = side ? undefined : symbolFor(eq).round;
+  const reach = round ? round * 0.6 : side || CENTRED.has(eq.type) ? 0 : Math.max(0, symV - CORNER);
   const v = Math.min(V(node) + reach, Math.max(V(node) - reach, V(E)));
-  const end = at(U(node) + sign * symU, v);
+  // A round symbol is met on its circle; anything else on its bounding box.
+  const depth = round ? Math.sqrt(round * round - (v - V(node)) ** 2) : symU;
+  const end = at(U(node) + sign * depth, v);
   let tail: Point[];
   if (Math.abs(V(E) - v) < 0.5 && Math.abs(V(P) - v) < 0.5) tail = [end];
   else {
@@ -217,6 +235,11 @@ export function stateLook(eq: Equipment): StateLook {
   const s = eq.state;
   const valve = eq.type === 'valve';
   if (!s) return { classes: [], fillOpacity: 0, dashed: false };
+  // An instrument shows a reading, not a position: only a missing reading changes the drawing.
+  if (eq.type === 'instrument')
+    return s.kind === 'unknown'
+      ? { classes: ['state-unknown'], fillOpacity: 0, dashed: true }
+      : { classes: ['state-value'], fillOpacity: 0, dashed: false };
   switch (s.kind) {
     case 'position': {
       const pos = s.position!;
@@ -229,7 +252,7 @@ export function stateLook(eq: Equipment): StateLook {
     case 'closing':
       return { classes: [`state-${s.kind}`], fillOpacity: 0, dashed: true };
     case 'on':
-      return { classes: ['state-on'], fillOpacity: valve ? 0 : 0.35, dashed: false };
+      return { classes: ['state-on'], fillOpacity: eq.type === 'pump' || eq.type === 'compressor' ? 0.35 : 0, dashed: false };
     case 'off':
       return { classes: ['state-off'], fillOpacity: valve ? 1 : 0, dashed: false };
     case 'unknown':
