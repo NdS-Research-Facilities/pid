@@ -1,4 +1,4 @@
-name: HACS validation
+name: Marketplace (formerly known as HACS) validation
 
 on:
   push:
@@ -9,7 +9,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  hacs:
+  # The validator of the Marketplace (formerly known as HACS); the action keeps its old name.
+  marketplace:
     runs-on: ubuntu-latest
     steps:
       - uses: hacs/action@main
