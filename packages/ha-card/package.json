@@ -1,6 +1,6 @@
 {
   "name": "@nds/pid-card",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Home Assistant Lovelace card for Mermaid v13 diagrams, with P&IDs and live entity values",
   "type": "module",

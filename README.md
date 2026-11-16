@@ -180,12 +180,40 @@ content: |
 | `numeric_fallback` | `0` | Number used when a template needs one but the state is not numeric |
 | `card_size` | `4` | Card height in the dashboard grid |
 | `icon_packs` | `mdi` | Iconify packs by prefix, as URLs of their JSON (`@iconify-json/<pack>/icons.json`) |
+| `actions` | — | Tag → what a click does; see below |
+| `auto_more_info` | `true` | Clicking equipment whose state reads one entity opens that entity |
 
 Templates use the same syntax as [ha-mermaid](https://github.com/pajew-ski/ha-mermaid), whose
 template engine is included (MIT): `${states['e']}`, `${attr('e', 'a')}`, `${round(x, 1)}`,
 `${fixed(x, 2)}`, `${calc(...)}`, `${if(cond, a, b)}`, `${is_state('e', 's')}`,
 `${timestamp('e')}` and more. Entity text is masked so it cannot break the diagram syntax; the
 P&ID parser decodes it for display.
+
+**Clicking equipment.** Equipment and instruments whose state line reads a single entity
+(`TT-101 = ${states['sensor.flow_temp']} °C`) open that entity's more-info dialog when clicked.
+`actions` sets or overrides what a click does, with Home Assistant's usual action configs:
+
+```yaml
+actions:
+  T-101: sensor.buffer_level            # more-info of this entity
+  P-101:
+    action: toggle
+    entity: switch.circulation_pump
+    confirmation: true
+  E-101:
+    action: navigate
+    navigation_path: /lovelace/heating
+  V-101:
+    action: perform-action
+    perform_action: valve.close_valve
+    target: { entity_id: valve.bypass }
+  TT-102: { action: none }
+```
+
+Clickable items get a pointer cursor and can be reached with Tab and run with Enter.
+
+**Visual editor.** The card has a form editor for the title, diagram text, theme and size;
+`actions` and `icon_packs` are set in the YAML editor.
 
 Icons: `mdi` (Material Design Icons, the set Home Assistant uses) is preset and fetched from
 jsDelivr only when a diagram uses an `mdi:` icon. To serve it from Home Assistant instead, copy
@@ -233,7 +261,7 @@ Mermaid v13 is alpha; the version is pinned exactly to `13.0.0-alpha.3`.
 
 ### Known issues
 
-- The card has no visual editor and no clickable nodes yet.
+- Mermaid v13 is an alpha; its layout occasionally runs a line close to another item's label.
 
 ## References
 

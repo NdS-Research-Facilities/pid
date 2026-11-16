@@ -15,6 +15,8 @@ export interface HomeAssistant {
   callService: (domain: string, service: string, data?: Record<string, unknown>) => void;
 }
 
+import type { ActionsConfig } from './actions.js';
+
 export type MermaidTheme = 'auto' | 'default' | 'dark' | 'forest' | 'neutral' | 'base';
 
 export interface PidCardConfig {
@@ -34,4 +36,8 @@ export interface PidCardConfig {
    * `mdi` is preset; a pack is fetched only when a diagram uses one of its icons.
    */
   icon_packs?: Record<string, string>;
+  /** Tag → action: an entity id (its more-info) or a Home Assistant action config. */
+  actions?: ActionsConfig;
+  /** Tags whose state line reads one entity open its more-info when clicked. Default true. */
+  auto_more_info?: boolean;
 }

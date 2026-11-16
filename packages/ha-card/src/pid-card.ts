@@ -1,11 +1,13 @@
 import { icons } from '@mermaid-js/plugin-icons';
 import { createMermaid } from 'mermaid';
 import { pid } from '@nds/diagram-pid';
+import { resolveActions, type ActionConfig } from './actions.js';
+import './editor.js';
 import type { HomeAssistant, MermaidTheme, PidCardConfig } from './types.js';
 import { extractReferencedEntities, renderTemplate } from './vendor/template-renderer.js';
 
 export const CARD_TYPE = 'pid-card';
-export const CARD_VERSION = '0.1.0';
+export const CARD_VERSION = '0.2.0';
 
 type Mermaid = ReturnType<typeof createMermaid>;
 
@@ -40,6 +42,10 @@ const STYLE = `
   .content { padding: 8px 16px 16px; }
   .diagram.auto { ${HA_THEME} }
   .diagram svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+  .diagram .clickable { cursor: pointer; }
+  .diagram .clickable:hover { opacity: 0.75; }
+  .diagram .clickable:focus { outline: none; }
+  .diagram .clickable:focus-visible { outline: 2px solid var(--primary-color, #03a9f4); outline-offset: 2px; }
   .error {
     margin-top: 8px;
     padding: 8px;
@@ -113,6 +119,10 @@ export class PidCard extends HTMLElement {
     this.header = root.querySelector('.card-header')!;
     this.diagram = root.querySelector('.diagram')!;
     this.errorBox = root.querySelector('.error')!;
+    this.diagram.addEventListener('click', (e) => this.act(e));
+    this.diagram.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') this.act(e);
+    });
   }
 
   setConfig(config: PidCardConfig): void {
@@ -139,6 +149,10 @@ export class PidCard extends HTMLElement {
 
   getCardSize(): number {
     return this.config?.card_size ?? 4;
+  }
+
+  static getConfigElement(): HTMLElement {
+    return document.createElement('pid-card-editor');
   }
 
   static getStubConfig(): Partial<PidCardConfig> {
@@ -186,6 +200,40 @@ export class PidCard extends HTMLElement {
     return this.mermaid;
   }
 
+  /** Makes the drawn equipment that has an action clickable and reachable by keyboard. */
+  private markActions(): void {
+    if (!this.config) return;
+    for (const [tag, action] of actionsOf(this.config)) {
+      const el = this.diagram.querySelector(`[data-id="node-${CSS.escape(tag)}"]`);
+      if (!el) continue;
+      el.classList.add('clickable');
+      el.setAttribute('tabindex', '0');
+      el.setAttribute('role', 'button');
+      el.setAttribute('aria-label', `${tag}: ${action.action}${action.entity ? ` ${action.entity}` : ''}`);
+    }
+  }
+
+  /**
+   * Runs the action of the equipment clicked (or focused and Enter/Space): handed to Home
+   * Assistant as a `hass-action` event, which handles every standard action and confirmation.
+   */
+  private act(e: Event): void {
+    if (!this.config) return;
+    const el = (e.target as Element | null)?.closest?.('[data-id^="node-"]');
+    const tag = el?.getAttribute('data-id')?.slice('node-'.length);
+    const action = tag ? actionsOf(this.config).get(tag) : undefined;
+    if (!action) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.dispatchEvent(
+      new CustomEvent('hass-action', {
+        detail: { config: { entity: action.entity, tap_action: action }, action: 'tap' },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
   private async draw(text: string, theme: Exclude<MermaidTheme, 'auto'>): Promise<void> {
     const seq = ++this.seq;
     try {
@@ -196,6 +244,7 @@ export class PidCard extends HTMLElement {
       this.diagram.classList.toggle('auto', (this.config?.theme ?? 'auto') === 'auto');
       // Mermaid v13 writes SVG through an element and attribute allowlist.
       this.diagram.innerHTML = svg;
+      this.markActions();
       this.errorBox.hidden = true;
       this.dispatchEvent(new CustomEvent('pid-card-rendered', { bubbles: false }));
     } catch (err) {
@@ -207,6 +256,10 @@ export class PidCard extends HTMLElement {
     }
   }
 }
+
+/** Tag → action for the current config. */
+const actionsOf = (config: PidCardConfig): Map<string, ActionConfig> =>
+  resolveActions(config.content, config.actions, config.auto_more_info !== false);
 
 /** A Mermaid error as one readable line, with its position when Mermaid gives one. */
 export function describeError(err: unknown): string {
