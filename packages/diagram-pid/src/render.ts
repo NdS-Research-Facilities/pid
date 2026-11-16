@@ -637,6 +637,9 @@ function dedupe(pts: readonly Point[]): Point[] {
 function isBlocked(s: Stream, byId: Map<string, Equipment>): boolean {
   const at = (id: string, port: Stream['sourcePort']) => {
     const eq = byId.get(id);
+    // A relief valve is closed in normal service: its lines stay solid. The valve itself still
+    // shows closed (solid) or lifted (open).
+    if (eq?.type === 'valve' && eq.valveKind === 'relief') return false;
     return !!eq && portOpen(eq, port) === false;
   };
   return at(s.source, s.sourcePort) || at(s.target, s.targetPort);

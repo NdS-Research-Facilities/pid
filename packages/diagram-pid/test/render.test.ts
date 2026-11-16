@@ -283,6 +283,13 @@ describe('Mermaid v13 integration', () => {
         expect(svg.match(/class="stream signal"/g)).toHaveLength(2);
         expect(svg.match(/class="stream connection"/g)).toHaveLength(4);
       }
+      if (file === 'valve-types.mmd') {
+        // PSV-1 is closed, as relief valves are in service: its lines stay solid.
+        const psvLines = svg.match(/<g class="stream process[^"]*" data-id="edge-s1[56]"/g) ?? [];
+        expect(psvLines).toHaveLength(2);
+        expect(psvLines.join('')).not.toContain('stream-blocked');
+        expect(svg).toMatch(/class="equipment valve state-closed"/);
+      }
       if (file === 'gradients.mmd') {
         expect(svg.match(/class="equipment [a-z]+ has-gradient/g)!.length).toBe(9);
         expect(svg.match(/class="level"/g)).toHaveLength(6); // T-6, T-7, T-8, V-1, D-1, R-1; T-9's is unknown

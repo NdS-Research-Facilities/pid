@@ -109,7 +109,8 @@ The tag is drawn inside the bubble, ISA-5.1 style: function letters over the loo
 ### Valves
 
 - `valve [kind]`: kinds `gate` (default), `globe`, `ball`, `plug`, `butterfly`, `check` and
-  `relief` (angle valve with spring; its outlet leaves sideways, like a 3-way valve's `C`).
+  `relief` (angle valve with spring; its outlet leaves sideways, like a 3-way valve's `C`; being
+  closed in normal service, it never dashes its lines).
   State `open`, `closed`, `opening`, `closing`, a position `0`–`100` (`%` optional), or
   `unavailable`. Closed is drawn solid, open hollow, partly open shaded; moving or unknown is
   dashed. A valve that a signal line drives (`TIC-101 -.-> TV-101`) is drawn as a control valve
