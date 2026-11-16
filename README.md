@@ -71,6 +71,19 @@ option (actions, icon packs, image base, theme).
 valve3 feed product instrument tee`, and for solar and electrical installations `collector pv
 inverter battery breaker meter grid consumer` (see below).
 
+### Actuators
+
+```
+actuator V3-1 motor        %% a motor (M) on a 3-way valve
+actuator MV-8 motor        %% …or on a 2-way valve
+actuator FV-7 diaphragm    %% the control valve's dome (also what a signal line gives)
+```
+
+Valves and 3-way valves can carry an actuator: a `motor` (a circle with an M) or a `diaphragm`.
+A valve a signal line drives gets a diaphragm unless `actuator` says otherwise, and the signal
+lands on the actuator. On a 3-way valve the actuator sits opposite port C, and moves with it when
+the valve is mirrored; the M always reads upright.
+
 ### Tees and crossings
 
 A `tee` is a junction on a pipe, drawn as a connection dot. Lines split and join at it without
@@ -166,8 +179,8 @@ their size.
 
 [`examples/coils.mmd`](examples/coils.mmd) has this example;
 [`examples/home-heating.mmd`](examples/home-heating.mmd) is a home heating system with a
-three-coil buffer, a solar collector, a motorised diverter, radiators and an electric element
-fed from PV:
+three-coil buffer, a solar collector, a motorised 3-way diverter, radiators, an electric
+element fed from PV, and domestic cold and hot water:
 
 ![Home heating](docs/images/home-heating.png)
 

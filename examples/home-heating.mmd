@@ -9,9 +9,7 @@ pid LR
   SC-1: collector "Solar hot water"
   gradient SC-1 64 °C, 48 °C
   V3-1: valve3 T "Diverter" = AC
-  %% The drawing's valve has a motor (M); pid has no motor actuator for 3-way valves yet, so the
-  %% motor is shown as a control function driving it.
-  M-1: instrument "Valve motor" = auto
+  actuator V3-1 motor
   T-1: vessel "Buffer"
   coil T-1 top "Solar coil"
   coil T-1 middle "Heating coil"
@@ -63,7 +61,6 @@ pid LR
   J-4 --- TT-3
   J-5 --- TT-4
   J-6 --- TT-5
-  M-1 -.-> V3-1
 
   %% ── The drawing's colours ───────────────────────────────────────────────
   classDef blue fill:#7da7d9,stroke:#4a78b5

@@ -11,6 +11,12 @@ pid LR
   PSV-1: valve relief "Relief" = closed
   FV-7: valve globe "Control" = 55%
   FIC-7: instrument dcs "Flow control" = SP 12 m³/h
+  MV-8: valve ball "Motorised" = open
+  actuator MV-8 motor
+  V3-9: valve3 T "Motorised 3-way" = AB
+  actuator V3-9 motor
+  V3-10: valve3 L "Signal 3-way" = AC
+  XIC-10: instrument dcs "Selector" = auto
   D-1: product "Users"
   D-2: product "Flare"
 
@@ -24,3 +30,11 @@ pid LR
   T-1 --> FV-7 --> D-1
   T-1 --> PSV-1 --> D-2
   FIC-7 -.-> FV-7
+  T-1 --> MV-8 --> D-1
+  T-1 --> V3-9.A
+  V3-9.B --> D-1
+  V3-9.C --> D-2
+  T-1 --> V3-10.A
+  V3-10.B --> D-1
+  V3-10.C --> D-2
+  XIC-10 -.-> V3-10

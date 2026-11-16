@@ -96,6 +96,8 @@ export function actuatorSide(dir: Dir): Side {
   return dir === 'TB' ? 'right' : dir === 'BT' ? 'left' : 'top';
 }
 
+const OPPOSITE_SIDE: Record<Side, Side> = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' };
+
 /** A coil nozzle's key in `PidLayout.coilSides`. */
 export const coilKey = (id: string, i: number, end: 'in' | 'out') => `${id}#${i}#${end}`;
 
@@ -128,7 +130,9 @@ export function endSides(
       : undefined;
   const target =
     s.kind === 'signal' && to?.actuated
-      ? actuatorSide(dir)
+      ? to.type === 'valve3'
+        ? OPPOSITE_SIDE[portSide(dir, 'C', mirrored.has(s.target))]
+        : actuatorSide(dir)
       : s.targetPort
         ? portSide(dir, s.targetPort, mirrored.has(s.target))
         : undefined;

@@ -23,7 +23,7 @@ import { hopPaths } from '@mermaid-js/core/layout/hops';
 import { ARROW, coilKey, drawsArrow, endSides, LABEL_GAP, LINE_NUMBER_GAP, type NodePlacement, type PidLayout } from './layout.js';
 import { PORTS, type Equipment, type EquipmentType, type PidModel, type Port, type Stream } from './model.js';
 import { boreProblem, breakerClosed, connectedPorts, portOpen } from './state.js';
-import { coilShape, interiorOf, symbolFor, type Interior, type SymbolDef, type SymbolPart } from './symbols.js';
+import { coilShape, interiorOf, symbolFor, VALVE3_ACTUATOR_DROP, type Interior, type SymbolDef, type SymbolPart } from './symbols.js';
 
 const DASH = '4 3' as SafeValue;
 const SIGNAL_DASH = '7 3' as SafeValue;
@@ -77,8 +77,8 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     if (!edge || edge.points.length < 2) return [];
     const pts = edge.points.map((p) => ({ x: p.x, y: p.y }));
     const sides = endSides(model.direction, s, byId, mirrored, layout.coilSides);
-    attach(pts, false, layout, byId.get(s.source), sides.source, coilNozzle(layout, byId.get(s.source), s.sourceCoil, 'outlet'));
-    attach(pts, true, layout, byId.get(s.target), sides.target, coilNozzle(layout, byId.get(s.target), s.targetCoil, 'inlet'));
+    attach(pts, false, layout, byId.get(s.source), sides.source, coilNozzle(layout, byId.get(s.source), s.sourceCoil, 'outlet'), portDepth(layout, s.source, s.sourcePort));
+    attach(pts, true, layout, byId.get(s.target), sides.target, coilNozzle(layout, byId.get(s.target), s.targetCoil, 'inlet'), portDepth(layout, s.target, s.targetPort));
     const others = [...layout.nodes].filter(([id]) => id !== s.source && id !== s.target).map(([, n]) => n);
     if (byId.get(s.source)?.type === 'tee') bendAtTee(pts, false, others);
     if (byId.get(s.target)?.type === 'tee') bendAtTee(pts, true, others);
@@ -163,7 +163,18 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     const scaled = place.scale !== 1 ? transforms(turned, scale(place.scale)) : turned;
     w.open('g', { transform: place.mirror ? transforms(scaled, translate(0, sym.height), scale(1, -1)) : scaled });
     if (eq.image || eq.icon) drawCustom(w, eq, place, look, styled, ctx);
-    for (const part of sym.parts) drawPart(w, part, eq, look, styled.paint, styled.shape, place.scale);
+    for (const part of sym.parts) {
+      // Lettering stays readable: undo the symbol's turn and mirror around the letter's centre.
+      const keep = part.upright && (place.turn || place.mirror) ? part.upright : undefined;
+      if (keep) {
+        const unturn = place.turn ? rotate(-place.turn, keep.x, keep.y) : undefined;
+        const unmirror = place.mirror ? transforms(translate(0, 2 * keep.y), scale(1, -1)) : undefined;
+        const parts = [unmirror, unturn].filter((t): t is NonNullable<typeof t> => t !== undefined);
+        w.open('g', { transform: parts.length === 1 ? parts[0]! : transforms(...parts) });
+      }
+      drawPart(w, part, eq, look, styled.paint, styled.shape, place.scale);
+      if (keep) w.close();
+    }
     const inside = (eq.gradient || eq.level) && interiorOf(eq.type);
     const fillMarks = inside ? drawFill(w, eq, inside, sym, model, layout, styled, ctx, { x: left, y: top }, place.scale) : undefined;
     if (eq.coils) drawCoils(w, eq, layout, styled.paint, place.scale);
@@ -487,10 +498,12 @@ const BORE_WIDTH = 4;
  */
 function drawBore(w: SvgWriter, eq: Equipment, paint: Paint): void {
   if (!eq.bore) return;
+  // An actuated valve's body sits lower, to make room for the actuator above it.
+  const dy = eq.actuated ? VALVE3_ACTUATOR_DROP : 0;
   w.leaf('circle', {
     class: 'ball',
     cx: BORE_CENTRE.x,
-    cy: BORE_CENTRE.y,
+    cy: BORE_CENTRE.y + dy,
     r: BALL_RADIUS,
     fill: paint.bg,
     stroke: paint.border,
@@ -499,7 +512,7 @@ function drawBore(w: SvgWriter, eq: Equipment, paint: Paint): void {
   const ports = connectedPorts(eq.state);
   if (!ports || ports.size < 2 || boreProblem(eq)) return;
   const b = pathBuilder();
-  for (const port of PORTS) if (ports.has(port)) b.moveTo(BORE_CENTRE.x, BORE_CENTRE.y).lineTo(BORE_ENDS[port].x, BORE_ENDS[port].y);
+  for (const port of PORTS) if (ports.has(port)) b.moveTo(BORE_CENTRE.x, BORE_CENTRE.y + dy).lineTo(BORE_ENDS[port].x, BORE_ENDS[port].y + dy);
   w.leaf('path', { class: `bore bore-${eq.bore}`, d: b.done(), fill: 'none', stroke: paint.line, 'stroke-width': BORE_WIDTH });
 }
 
@@ -528,6 +541,15 @@ function drawLabels(w: SvgWriter, layout: PidLayout, node: Point, place: NodePla
   line(labels.value, { class: 'instrument-value', 'font-size': fs, 'font-weight': 'bold' });
   line(labels.name, { 'font-size': fs - 2 });
   line(labels.state, { class: 'equipment-state', 'font-size': fs - 2, 'font-style': 'italic' });
+}
+
+/**
+ * A 3-way valve's port C ends at the base of its triangle, 33 px from the body's centre; the
+ * symbol's box can reach further on that side (room kept for an actuator opposite).
+ */
+function portDepth(layout: PidLayout, id: string, port: Port | undefined): number | undefined {
+  const place = layout.placements.get(id);
+  return port === 'C' && place ? 33 * place.scale : undefined;
 }
 
 /** Where a line meets coil `i` of `eq`, in diagram coordinates: its inlet or outlet nozzle. */
@@ -585,6 +607,8 @@ function attach(
   side: Side | undefined,
   /** An exact end on the symbol (a coil's nozzle), instead of one worked out from its shape. */
   fixed?: Point,
+  /** How far from the centre the line ends, where the symbol's box reaches further (port C). */
+  depthAt?: number,
 ): void {
   const node = eq && layout.nodes.get(eq.id);
   const place = eq && layout.placements.get(eq.id);
@@ -607,7 +631,7 @@ function attach(
   const reach = round ? round * 0.6 : side ? 0 : squareInstrument ? symV / 2 : CENTRED.has(eq.type) ? 0 : Math.max(0, symV - CORNER);
   const v = fixed ? V(fixed) : Math.min(V(node) + reach, Math.max(V(node) - reach, V(E)));
   // Lines run into a tee's centre; a round symbol is met on its circle; anything else on its box.
-  const depth = eq.type === 'tee' ? 0 : round ? Math.sqrt(round * round - (v - V(node)) ** 2) : symU;
+  const depth = depthAt ?? (eq.type === 'tee' ? 0 : round ? Math.sqrt(round * round - (v - V(node)) ** 2) : symU);
   const end = fixed ?? at(U(node) + sign * depth, v);
   let tail: Point[];
   const Q = pts.length >= 3 ? pts[atEnd ? i - 2 : 2] : undefined;

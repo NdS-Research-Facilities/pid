@@ -24,6 +24,9 @@ export type InstrumentLocation = (typeof INSTRUMENT_LOCATIONS)[number];
 export const VALVE_KINDS = ['gate', 'globe', 'ball', 'plug', 'butterfly', 'check', 'relief'] as const;
 export type ValveKind = (typeof VALVE_KINDS)[number];
 
+export const ACTUATORS = ['diaphragm', 'motor'] as const;
+export type ActuatorKind = (typeof ACTUATORS)[number];
+
 export const BORES = ['L', 'T'] as const;
 export type Bore = (typeof BORES)[number];
 
@@ -64,8 +67,10 @@ export interface Equipment {
    * also joins A to B, or all three. Absent: any combination is accepted and no bore is drawn.
    */
   bore?: Bore;
-  /** A valve a signal line drives: drawn as a control valve with an actuator on top. */
+  /** A valve with an actuator: driven by a signal line, or given one with `actuator`. */
   actuated?: boolean;
+  /** `actuator TAG motor|diaphragm`: the actuator's kind; a diaphragm when absent. */
+  actuator?: ActuatorKind;
   /** `class TAG name`: classDef names applied in order, then `style` declarations on top. */
   classes?: string[];
   /** `style TAG fill:#fdd,stroke:#c00`: declarations as written. */

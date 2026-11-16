@@ -97,7 +97,7 @@ describe('valve kinds', () => {
     const { model, diagnostics } = parsePid(read('valve-types.mmd') + '\n  FIC-7 -.-> PSV-1\n');
     expect(diagnostics).toEqual([]);
     const kinds = Object.fromEntries(model.equipment.filter((e) => e.type === 'valve').map((e) => [e.id, e.valveKind]));
-    expect(kinds).toEqual({ 'V-1': 'gate', 'V-2': 'globe', 'V-3': 'ball', 'V-4': 'plug', 'V-5': 'butterfly', 'V-6': 'check', 'PSV-1': 'relief', 'FV-7': 'globe' });
+    expect(kinds).toEqual({ 'V-1': 'gate', 'V-2': 'globe', 'V-3': 'ball', 'V-4': 'plug', 'V-5': 'butterfly', 'V-6': 'check', 'PSV-1': 'relief', 'FV-7': 'globe', 'MV-8': 'ball' });
     expect(model.equipment.find((e) => e.id === 'FV-7')?.actuated).toBe(true);
     expect(model.equipment.find((e) => e.id === 'PSV-1')?.actuated).toBeUndefined();
     expect(model.equipment.find((e) => e.id === 'V-2')?.actuated).toBeUndefined();
@@ -241,6 +241,37 @@ describe('solar and electrical', () => {
   });
 });
 
+describe('actuators', () => {
+  it('puts motors and diaphragms on 2- and 3-way valves, and signals on 3-way valves', () => {
+    const { model, diagnostics } = parsePid(read('valve-types.mmd'));
+    expect(diagnostics).toEqual([]);
+    const eq = (id: string) => model.equipment.find((e) => e.id === id)!;
+    expect(eq('MV-8')).toMatchObject({ actuated: true, actuator: 'motor' });
+    expect(eq('V3-9')).toMatchObject({ actuated: true, actuator: 'motor' });
+    expect(eq('V3-10')).toMatchObject({ actuated: true });
+    expect(eq('V3-10').actuator).toBeUndefined(); // signal-driven: a diaphragm
+    expect(eq('V-1').actuated).toBeUndefined();
+  });
+
+  it('refuses actuators on other equipment and relief valves', () => {
+    const msgs = parsePid('pid\n  P: pump\n  R: valve relief\n  actuator P motor\n  actuator R motor\n').diagnostics.map((d) => d.message);
+    expect(msgs).toEqual([
+      expect.stringContaining('P is a pump: actuators go on valves and 3-way valves'),
+      expect.stringContaining('R is a relief valve: actuators go on valves and 3-way valves'),
+    ]);
+  });
+
+  it('lands a signal on a 3-way valve on its actuator, opposite port C', async () => {
+    const { endSides } = await import('../src/layout.js');
+    const { model } = parsePid(read('valve-types.mmd'));
+    const byId = new Map(model.equipment.map((e) => [e.id, e]));
+    const signal = model.streams.find((s) => s.source === 'XIC-10')!;
+    expect(endSides('LR', signal, byId).target).toBe('top');
+    expect(endSides('LR', signal, byId, new Set(['V3-10'])).target).toBe('bottom');
+    expect(endSides('TB', signal, byId).target).toBe('right');
+  });
+});
+
 describe('coils and size', () => {
   it('reads coils, their heights, walls and names, and lines to them', () => {
     const { model, diagnostics } = parsePid(read('coils.mmd'));
@@ -353,6 +384,10 @@ describe('Mermaid v13 integration', () => {
         expect(psvLines).toHaveLength(2);
         expect(psvLines.join('')).not.toContain('stream-blocked');
         expect(svg).toMatch(/class="equipment valve state-closed"/);
+      }
+      if (file === 'valve-types.mmd') {
+        // Three motors: MV-8, V3-9, and the M glyph is drawn as a path inside each circle.
+        expect(svg.match(/data-id="node-(MV-8|V3-9)"/g)).toHaveLength(2);
       }
       if (file === 'home-heating.mmd') {
         // The translated drawing: three coils, the PV cable kept orange under the blue default.

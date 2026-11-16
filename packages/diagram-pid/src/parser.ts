@@ -6,6 +6,7 @@ import {
   INSTRUMENT_LOCATIONS,
   VALVE_KINDS,
   BORES,
+  type ActuatorKind,
   type Bore,
   type Equipment,
   type EquipmentType,
@@ -41,6 +42,7 @@ const PIPE = /^pipe\s+(\S+)\s+(.+)$/;
 const GRADIENT = /^gradient\s+([A-Za-z][\w.-]*)\s+(.+)$/;
 const GRADIENT_RANGE = /^gradient-range(?:\s+([A-Za-z][\w.-]*))?\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$/;
 const GRADIENT_MARKS = /^gradient-marks\s+(on|off)$/;
+const ACTUATOR = /^actuator\s+([A-Za-z][\w.-]*)\s+(motor|diaphragm)$/;
 const SIZE = /^size\s+([A-Za-z][\w.-]*)\s+(\d+(?:\.\d+)?)$/;
 const COIL = /^coil\s+([A-Za-z][\w.-]*)\s+(top|middle|bottom|@\s*\d+(?:\.\d+)?\s*%)(?:\s+(left|right))?(?:\s+"([^"]*)")?$/;
 const COIL_AT: Record<string, number> = { top: 0.8, middle: 0.5, bottom: 0.2 };
@@ -82,6 +84,7 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
   };
   const fills: { id: string; start: number; end: number }[] = [];
   const coilLines: { id: string; start: number; end: number }[] = [];
+  const actuatorLines: { id: string; start: number; end: number }[] = [];
   const diagnostics: Diagnostic[] = [];
   const children: AstNode[] = [];
   const byId = new Map<string, Equipment>();
@@ -139,6 +142,12 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
     } else if ((m = GRADIENT.exec(line))) {
       touch(m[1]!, start, end).gradient = parseStops(decodeEntities(m[2]!));
       fills.push({ id: m[1]!, start, end });
+      continue;
+    } else if ((m = ACTUATOR.exec(line))) {
+      const eq = touch(m[1]!, start, end);
+      eq.actuator = m[2] as ActuatorKind;
+      eq.actuated = true;
+      actuatorLines.push({ id: m[1]!, start, end });
       continue;
     } else if ((m = SIZE.exec(line))) {
       const f = Number(m[2]);
@@ -259,9 +268,15 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
     [s.target, s.targetPort, coil] = resolve(s.target);
     if (coil !== undefined) s.targetCoil = coil;
     const target = byId.get(s.target);
-    if (s.kind === 'signal' && target?.type === 'valve' && target.valveKind !== 'relief') target.actuated = true;
+    const drivable = target?.type === 'valve3' || (target?.type === 'valve' && target.valveKind !== 'relief');
+    if (s.kind === 'signal' && drivable) target!.actuated = true;
   });
 
+  for (const a of actuatorLines) {
+    const eq = byId.get(a.id)!;
+    const ok = eq.type === 'valve3' || (eq.type === 'valve' && eq.valveKind !== 'relief');
+    if (!ok) error(`${a.id} is ${eq.type === 'valve' ? 'a relief valve' : `a ${eq.type}`}: actuators go on valves and 3-way valves`, a.start, a.end);
+  }
   for (const c of coilLines) {
     const eq = byId.get(c.id)!;
     if (!COILABLE.has(eq.type)) error(`${c.id} is a ${eq.type}: coils go in ${[...COILABLE].join(', ')}`, c.start, c.end);

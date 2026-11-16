@@ -1,4 +1,4 @@
-import type { Coil, Equipment, EquipmentType, InstrumentLocation, Port, ValveKind } from './model.js';
+import type { ActuatorKind, Coil, Equipment, EquipmentType, InstrumentLocation, Port, ValveKind } from './model.js';
 
 export interface SymbolPart {
   tag: 'path' | 'circle' | 'rect';
@@ -9,6 +9,8 @@ export interface SymbolPart {
   ink?: boolean;
   /** The 3-way valve port this part stands for: drawn solid when that port is shut. */
   port?: Port;
+  /** Lettering (a motor's M): kept upright around this point however the symbol turns or mirrors. */
+  upright?: { x: number; y: number };
 }
 
 export interface SymbolDef {
@@ -222,23 +224,58 @@ const RELIEF_VALVE: SymbolDef = {
  * A valve of `kind`. A control valve (`actuated`) has a stem and a diaphragm actuator above
  * the body; the space below mirrors it, so the body stays at the symbol's centre on the line.
  */
-export function valveSymbol(kind: ValveKind = 'gate', actuated = false): SymbolDef {
+export function valveSymbol(kind: ValveKind = 'gate', actuated = false, actuator: ActuatorKind = 'diaphragm'): SymbolDef {
   if (kind === 'relief') return RELIEF_VALVE;
   if (!actuated) return { width: 36, height: 24, turns: true, parts: valveBody(kind, 0) };
+  return { width: 36, height: 68, turns: true, parts: [...valveBody(kind, 22), ...actuatorParts(actuator, 18, 34, 12)] };
+}
+
+/**
+ * An actuator on a stem rising from the body's centre (`cx`, `body`): a diaphragm (a dome whose
+ * base is at `top`) or a motor (a circle with an M, centred on `top`).
+ */
+function actuatorParts(kind: ActuatorKind, cx: number, body: number, top: number): SymbolPart[] {
+  if (kind === 'motor') {
+    const r = 9;
+    return [
+      line(`M${cx} ${body} V${top + r}`),
+      { tag: 'circle', attrs: { cx, cy: top, r }, fill: true },
+      { ...line(`M${cx - 4.5} ${top + 4.5} V${top - 4.5} L${cx} ${top + 1} L${cx + 4.5} ${top - 4.5} V${top + 4.5}`), upright: { x: cx, y: top } },
+    ];
+  }
+  return [line(`M${cx} ${body} V${top}`), line(`M${cx - 12} ${top} A12 11 0 0 1 ${cx + 12} ${top} Z`)];
+}
+
+/** How far an actuated 3-way valve's body sits below the plain one's, to make room above. */
+export const VALVE3_ACTUATOR_DROP = 12;
+
+/**
+ * A 3-way valve with an actuator above the body, opposite port C. The body keeps its centre at
+ * the symbol's centre, so the A–B line still runs straight through.
+ */
+function actuatedValve3(actuator: ActuatorKind): SymbolDef {
+  const d = VALVE3_ACTUATOR_DROP;
+  const c = 33 + d;
   return {
-    width: 36,
-    height: 68,
+    width: 54,
+    height: 66 + 2 * d,
     turns: true,
-    parts: [...valveBody(kind, 22), line('M18 34 V12'), line('M6 12 A12 11 0 0 1 30 12 Z')],
+    parts: [
+      { ...shape(`M0 ${15 + d} L27 ${c} L0 ${51 + d} Z`), port: 'A' },
+      { ...shape(`M54 ${15 + d} L27 ${c} L54 ${51 + d} Z`), port: 'B' },
+      { ...shape(`M27 ${c} L9 ${66 + d} H45 Z`), port: 'C' },
+      ...actuatorParts(actuator, 27, c - 9, actuator === 'motor' ? 11 : 22),
+    ],
   };
 }
 
 /** The symbol drawn for `eq`. A custom image or icon takes the symbol's place (no parts). */
-export function symbolFor(eq: Pick<Equipment, 'type' | 'location' | 'actuated' | 'valveKind' | 'image' | 'icon'>): SymbolDef {
+export function symbolFor(eq: Pick<Equipment, 'type' | 'location' | 'actuated' | 'actuator' | 'valveKind' | 'image' | 'icon'>): SymbolDef {
   if (eq.image) return { width: eq.image.width, height: eq.image.height, parts: [] };
   if (eq.icon) return { width: eq.icon.size, height: eq.icon.size, parts: [] };
   if (eq.type === 'instrument') return INSTRUMENTS[eq.location ?? 'field'];
-  if (eq.type === 'valve') return valveSymbol(eq.valveKind, eq.actuated);
+  if (eq.type === 'valve') return valveSymbol(eq.valveKind, eq.actuated, eq.actuator);
+  if (eq.type === 'valve3' && eq.actuated) return actuatedValve3(eq.actuator ?? 'diaphragm');
   return SYMBOLS[eq.type];
 }
 
