@@ -188,3 +188,8 @@ Mermaid v13 is alpha; the version is pinned exactly to `13.0.0-alpha.3`.
 - [Piping and instrumentation diagram — Wikipedia](https://en.wikipedia.org/wiki/Piping_and_instrumentation_diagram)
 - [Process flow diagram — Wikipedia](https://en.wikipedia.org/wiki/Process_flow_diagram)
 - [Mermaid v13 alpha](https://mermaid.js.org/intro/v13-alpha.html)
+
+## License
+
+[MIT](LICENSE). `packages/ha-card/src/vendor/template-renderer.ts` comes from
+[ha-mermaid](https://github.com/pajew-ski/ha-mermaid) and keeps its own MIT notice.
