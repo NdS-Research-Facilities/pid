@@ -208,7 +208,7 @@ function drawCustom(w: SvgWriter, eq: Equipment, place: NodePlacement, look: Sta
   if (styled.painted) frame({ fill: styled.paint.bg, stroke: styled.paint.border, 'stroke-width': 1.2, ...styled.shape });
   let drawn = false;
   if (eq.image) {
-    const href = checkImageUrl(eq.image.url, { securityLevel: ctx.securityLevel, warn: (w) => ctx.warn(w) });
+    const href = checkImageUrl(imageUrl(eq.image.url, ctx), { securityLevel: ctx.securityLevel, warn: (w) => ctx.warn(w) });
     if (href) {
       w.leaf('image', { class: 'custom-image', href, x: 0, y: 0, width, height, preserveAspectRatio: 'xMidYMid meet' });
       drawn = true;
@@ -225,6 +225,18 @@ function drawCustom(w: SvgWriter, eq: Equipment, place: NodePlacement, look: Sta
     }
   }
   if (!drawn || look.dashed) frame({ fill: 'none', stroke: styled.paint.border, 'stroke-width': 1.2, 'stroke-dasharray': DASH });
+}
+
+/**
+ * An image path as the browser should load it: a relative one (no scheme, not starting with `/`)
+ * is joined to the `pid.imageBase` config, so `heat-pump.png` in a Home Assistant card loads
+ * `/local/heat-pump.png` rather than a path under the dashboard's own URL.
+ */
+export function imageUrl(url: string, ctx: Pick<RenderContext, 'config'>): string {
+  if (/^([a-z][a-z0-9+.-]*:|\/)/i.test(url)) return url;
+  const base = String((ctx.config as { pid?: { imageBase?: unknown } }).pid?.imageBase ?? '');
+  if (!base) return url;
+  return base.replace(/\/*$/, '/') + url.replace(/^\.\//, '');
 }
 
 function drawPart(w: SvgWriter, part: SymbolPart, eq: Equipment, look: StateLook, paint: Paint, extra: Attrs = {}): void {

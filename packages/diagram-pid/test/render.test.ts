@@ -2,7 +2,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { icons } from '@mermaid-js/plugin-icons';
 import { createMermaid } from 'mermaid';
 import { describe, expect, it } from 'vitest';
-import { boreProblem, declarations, parsePid, parseState, pid } from '../src/index.js';
+import { boreProblem, declarations, imageUrl, parsePid, parseState, pid } from '../src/index.js';
 
 const examplesDir = new URL('../../../examples/', import.meta.url);
 const read = (name: string) => readFileSync(new URL(name, examplesDir), 'utf8');
@@ -153,6 +153,16 @@ describe('custom styling', () => {
     expect(eq('HP-1').image).toEqual({ url: 'assets/heat-pump.png', width: 64, height: 64 });
     expect(eq('PT-103').icon).toEqual({ name: 'mdi:gauge-low', size: 40 });
     expect(pid.icons!(model)).toEqual(['mdi:gauge-low', 'mdi:snowflake-thermometer']);
+  });
+
+  it('joins relative image paths to pid.imageBase only', () => {
+    const ctx = (imageBase?: string) => ({ config: { pid: { imageBase } } }) as never;
+    expect(imageUrl('assets/heat-pump.png', ctx('/local/'))).toBe('/local/assets/heat-pump.png');
+    expect(imageUrl('./pump.png', ctx('/local'))).toBe('/local/pump.png');
+    expect(imageUrl('/local/pump.png', ctx('/local/'))).toBe('/local/pump.png');
+    expect(imageUrl('https://example.org/p.png', ctx('/local/'))).toBe('https://example.org/p.png');
+    expect(imageUrl('data:image/png;base64,AAAA', ctx('/local/'))).toBe('data:image/png;base64,AAAA');
+    expect(imageUrl('assets/heat-pump.png', ctx())).toBe('assets/heat-pump.png');
   });
 
   it('splits declarations at commas outside parentheses', () => {

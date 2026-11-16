@@ -8,6 +8,9 @@ import { renderPid } from './render.js';
 export const pid: DiagramPlugin<PidModel, PidLayout> = {
   id: 'pid',
   formats: ['svg'],
+  // `pid.imageBase`: prefixed to relative image paths (`image HP-1 heat-pump.png`); a Home
+  // Assistant card sets `/local/`, where config/www is served.
+  configDefaults: { imageBase: '' },
   layoutKind: 'graph',
   detector: (text) => detectPid(text),
   parse: (text, ctx) => parsePid(text, ctx),

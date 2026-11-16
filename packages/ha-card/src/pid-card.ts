@@ -238,7 +238,7 @@ export class PidCard extends HTMLElement {
     const seq = ++this.seq;
     try {
       const mermaid = await this.instance();
-      mermaid.initialize({ startOnLoad: false, theme });
+      mermaid.initialize({ startOnLoad: false, theme, pid: { imageBase: this.config?.image_base ?? '/local/' } } as never);
       const { svg } = await mermaid.render(`${this.uid}-${seq}`, text);
       if (seq !== this.seq) return; // a newer render started meanwhile
       this.diagram.classList.toggle('auto', (this.config?.theme ?? 'auto') === 'auto');

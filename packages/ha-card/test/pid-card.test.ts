@@ -163,4 +163,20 @@ describe('pid-card', () => {
     expect(svg()).toContain('class-alarm');
     expect(svg()).toContain('#d50000');
   });
+
+  it('loads relative images from /local/, or from image_base', async () => {
+    const content = 'pid LR\n  HP-1: block\n  image HP-1 assets/heat-pump.png\n  M-1: block\n  image M-1 /local/m.png\n';
+    const a = mount({ content });
+    let done = a.rendered();
+    a.card.hass = hass([]);
+    await done;
+    expect(a.svg()).toContain('href="/local/assets/heat-pump.png"');
+    expect(a.svg()).toContain('href="/local/m.png"');
+
+    const b = mount({ content, image_base: '/local/pid/' });
+    done = b.rendered();
+    b.card.hass = hass([]);
+    await done;
+    expect(b.svg()).toContain('href="/local/pid/assets/heat-pump.png"');
+  });
 });

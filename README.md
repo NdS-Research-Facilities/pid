@@ -146,7 +146,10 @@ A picture can replace any symbol, keeping its tag, value and name labels:
 | `icon PT-103 mdi:gauge [size]` | an [Iconify](https://icon-sets.iconify.design/) icon, default 48 px; tinted with the `stroke` colour |
 | `image HP-1 /local/heat-pump.png [W[xH]]` | an image, default 48 px, at most 240 |
 
-In Home Assistant, put images in `config/www/` and use `/local/...` URLs.
+In the Home Assistant card, a relative image path loads from `config/www/` (served as `/local/`):
+`image HP-1 assets/heat-pump.png` shows `config/www/assets/heat-pump.png`. To try the example,
+copy `examples/assets/heat-pump.png` there. Paths starting with `/` and full URLs are used as
+written; the card option `image_base` changes the folder.
 
 ![Colours, icons and an image](docs/images/custom-styling.png)
 
@@ -181,6 +184,7 @@ content: |
 | `card_size` | `4` | Card height in the dashboard grid |
 | `icon_packs` | `mdi` | Iconify packs by prefix, as URLs of their JSON (`@iconify-json/<pack>/icons.json`) |
 | `actions` | — | Tag → what a click does; see below |
+| `image_base` | `/local/` | Prefixed to relative image paths in the diagram |
 | `auto_more_info` | `true` | Clicking equipment whose state reads one entity opens that entity |
 
 Templates use the same syntax as [ha-mermaid](https://github.com/pajew-ski/ha-mermaid), whose

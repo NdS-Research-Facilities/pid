@@ -38,6 +38,11 @@ export interface PidCardConfig {
   icon_packs?: Record<string, string>;
   /** Tag → action: an entity id (its more-info) or a Home Assistant action config. */
   actions?: ActionsConfig;
+  /**
+   * Prefixed to relative image paths in the diagram (`image HP-1 heat-pump.png`). Default
+   * `/local/`, where Home Assistant serves config/www.
+   */
+  image_base?: string;
   /** Tags whose state line reads one entity open its more-info when clicked. Default true. */
   auto_more_info?: boolean;
 }
