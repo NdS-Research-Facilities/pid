@@ -22,14 +22,16 @@ import type { LayoutModelNode, Side } from '@mermaid-js/core/layout';
 import { hopPaths } from '@mermaid-js/core/layout/hops';
 import { ARROW, drawsArrow, endSides, LABEL_GAP, LINE_NUMBER_GAP, type NodePlacement, type PidLayout } from './layout.js';
 import { PORTS, type Equipment, type EquipmentType, type PidModel, type Port, type Stream } from './model.js';
-import { boreProblem, connectedPorts, portOpen } from './state.js';
+import { boreProblem, breakerClosed, connectedPorts, portOpen } from './state.js';
 import { interiorOf, symbolFor, type Interior, type SymbolDef, type SymbolPart } from './symbols.js';
 
 const DASH = '4 3' as SafeValue;
 const SIGNAL_DASH = '7 3' as SafeValue;
 
 /** Line weights: process piping heavy, instrument connections and signals light. */
-const WEIGHT = { process: 1.6, connection: 1, signal: 1 } as const;
+const WEIGHT = { process: 1.6, connection: 1, signal: 1, electric: 1.8 } as const;
+/** Power wiring's own colour, so cables stand apart from pipes and signals; `linkStyle` overrides. */
+const CABLE = '#ef6c00';
 
 /** Writes the whole `<svg>` document for a laid-out P&ID. */
 export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext, w: SvgWriter): void {
@@ -89,11 +91,11 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
 
   w.open('g', { class: 'streams' });
   routes.forEach(({ s, edge, pts, d }, i) => {
-    const blocked = s.kind === 'process' && isBlocked(s, byId);
+    const blocked = (s.kind === 'process' || s.kind === 'electric') && isBlocked(s, byId);
     // linkStyle: `default` first, then the line's own; Mermaid checks every declaration.
     const decls = [...(model.linkStyleDefault ?? []), ...(s.style ?? [])];
     const { fill: _fill, stroke, ...lineStyle } = decls.length ? checkStyle(decls, (wn) => ctx.warn(wn)).shape : ({} as Attrs);
-    const ink = (stroke as Paint['line'] | undefined) ?? paint.line;
+    const ink = (stroke as Paint['line'] | undefined) ?? (s.kind === 'electric' ? checkColor(CABLE)! : paint.line);
     w.open('g', { class: `stream ${s.kind}${blocked ? ' stream-blocked' : ''}`, 'data-id': s.ast });
     w.leaf('path', {
       d: hopped[i] ?? d,
@@ -164,6 +166,7 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     const inside = (eq.gradient || eq.level) && interiorOf(eq.type);
     if (inside) drawFill(w, eq, inside, sym, model, layout, styled, ctx);
     if (eq.type === 'valve3') drawBore(w, eq, styled.paint);
+    if (eq.type === 'breaker') drawBlade(w, eq, styled.paint);
     w.close();
     if (place.labels.bubble) drawBubble(w, place.labels.bubble, node, styled.text);
     drawLabels(w, layout, node, place, styled.text);
@@ -254,6 +257,8 @@ export function imageUrl(url: string, ctx: Pick<RenderContext, 'config'>): strin
 const SCALE: readonly Rgb[] = ['#1565c0', '#29b6f6', '#fdd835', '#fb8c00', '#c62828'].map((h) => parseRgb(h)!);
 /** A level's liquid without a gradient. */
 const LIQUID = '#90caf9';
+/** A battery's charge without a gradient. */
+const CHARGE = '#66bb6a';
 /** Band height of a fill, px: thin enough to read as a smooth gradient. */
 const BAND = 2;
 
@@ -316,7 +321,8 @@ function drawFill(
     })
     .sort((a, b) => a.h - b.h);
   const levelPercent = eq.level?.percent;
-  const plain = parseRgb(eq.level?.color ?? LIQUID) ?? parseRgb(LIQUID)!;
+  const liquid = eq.type === 'battery' ? CHARGE : LIQUID;
+  const plain = parseRgb(eq.level?.color ?? liquid) ?? parseRgb(liquid)!;
   const colourAt = (h: number): Rgb | undefined => {
     if (!stops.length) return eq.level && levelPercent !== undefined ? plain : undefined;
     if (h <= stops[0]!.h) return stops[0]!.c;
@@ -352,8 +358,9 @@ function drawFill(
     return { fill: c ? colour(parseRgb(ink(c))!) : styled.text.fill, 'font-size': markSize };
   };
 
-  // The level: a line across the surface, the P&ID ▽ above it, and its value.
-  if (eq.level && levelPercent !== undefined) {
+  // The level: a line across the surface, the P&ID ▽ above it, and its value. A battery's
+  // charge is not a liquid: no surface line or ▽, just the fill and the value.
+  if (eq.level && levelPercent !== undefined && eq.type !== 'battery') {
     const y = yAt(levelPercent / 100);
     const span = wallAt(y);
     if (span) {
@@ -433,6 +440,23 @@ function drawPart(w: SvgWriter, part: SymbolPart, eq: Equipment, look: StateLook
   });
 }
 
+/**
+ * A breaker's blade: from the left terminal straight to the right one when it conducts, lifted
+ * when it is open, half-lifted and dashed when its state is unknown.
+ */
+function drawBlade(w: SvgWriter, eq: Equipment, paint: Paint): void {
+  const closed = breakerClosed(eq);
+  const end = closed === true ? { x: 33.5, y: 14 } : closed === false ? { x: 31, y: 0 } : { x: 33, y: 7 };
+  w.leaf('path', {
+    class: `blade blade-${closed === true ? 'closed' : closed === false ? 'open' : 'unknown'}`,
+    d: pathBuilder().moveTo(4, 14).lineTo(end.x, end.y).done(),
+    fill: 'none',
+    stroke: paint.border,
+    'stroke-width': 2,
+    'stroke-dasharray': closed === undefined ? DASH : undefined,
+  });
+}
+
 /** The 3-way valve body's centre and where each port's bore line ends, in symbol coordinates. */
 const BORE_CENTRE: Point = { x: 27, y: 33 };
 const BORE_ENDS: Record<Port, Point> = { A: { x: 6, y: 33 }, B: { x: 48, y: 33 }, C: { x: 27, y: 58 } };
@@ -490,7 +514,10 @@ function drawLabels(w: SvgWriter, layout: PidLayout, node: Point, place: NodePla
 }
 
 /** Compact symbols are met on their centre line; tall or wide ones anywhere near it. */
-const CENTRED: ReadonlySet<EquipmentType> = new Set(['pump', 'compressor', 'exchanger', 'valve', 'valve3', 'feed', 'product', 'instrument', 'tee']);
+const CENTRED: ReadonlySet<EquipmentType> = new Set([
+  'pump', 'compressor', 'exchanger', 'valve', 'valve3', 'feed', 'product', 'instrument', 'tee',
+  'inverter', 'breaker', 'meter', 'grid', 'consumer',
+]);
 /** Keep stream ends this far from a symbol's corners. */
 const CORNER = 20;
 /** How far outside the box a stream turns to line up with the symbol. */

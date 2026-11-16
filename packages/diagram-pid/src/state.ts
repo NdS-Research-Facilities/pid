@@ -44,6 +44,21 @@ export function stateText(state: EquipmentState): string {
   }
 }
 
+const CONDUCTING = new Set(['on', 'closed', 'close', 'true', 'connected']);
+const ISOLATED = new Set(['off', 'open', 'opened', 'false', 'tripped', 'disconnected']);
+
+/**
+ * Is a breaker or isolator conducting? Electrical sense: `closed` / `on` conducts, `open` /
+ * `off` / `tripped` isolates. Undefined when its state says neither.
+ */
+export function breakerClosed(eq: Equipment): boolean | undefined {
+  const v = eq.state?.raw.trim().toLowerCase();
+  if (v === undefined) return undefined;
+  if (CONDUCTING.has(v)) return true;
+  if (ISOLATED.has(v)) return false;
+  return undefined;
+}
+
 /** An instrument's reading as written (`42.5 °C`), or `?` when Home Assistant has none. */
 export function instrumentText(state: EquipmentState): string {
   return state.kind === 'unknown' ? '?' : state.raw;
@@ -79,7 +94,9 @@ export function boreProblem(eq: Equipment): string | undefined {
 
 /** The state line under a piece of equipment, with the reason when the state is impossible. */
 export function equipmentStateText(eq: Equipment): string {
-  const text = stateText(eq.state!);
+  const valve = eq.type === 'valve' || eq.type === 'valve3';
+  // Only valves have positions: elsewhere a number is a reading (`PV-1 = 3.4` shows 3.4).
+  const text = !valve && eq.state!.kind === 'position' ? eq.state!.raw : stateText(eq.state!);
   const problem = boreProblem(eq);
   return problem ? `${text}: ${problem}` : text;
 }
@@ -91,6 +108,7 @@ export function equipmentStateText(eq: Equipment): string {
 export function portOpen(eq: Equipment, port: Port | undefined): boolean | undefined {
   const s = eq.state;
   if (!s) return undefined;
+  if (eq.type === 'breaker') return breakerClosed(eq);
   if (eq.type === 'valve3') {
     // An impossible state says nothing reliable about the ports.
     const ports = boreProblem(eq) ? undefined : connectedPorts(s);

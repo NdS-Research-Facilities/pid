@@ -23,9 +23,10 @@ import { parseState } from './state.js';
 const HEADER = /^pid(?:\s+(LR|RL|TB|TD|BT))?\s*$/;
 const TITLE = /^title\s+(.+)$/;
 /** `TAG: type [variant] ["Name"] [= state]`; the variant is an instrument's location or a valve's kind. */
-const EQUIPMENT = /^([A-Za-z][\w.-]*)\s*:\s*([A-Za-z][A-Za-z0-9]*)(?:\s+([A-Za-z]+))?(?:\s+"([^"]*)")?(?:\s*=\s*(.*))?$/;
+const EQUIPMENT = /^([A-Za-z][\w.-]*)\s*:\s*([A-Za-z][A-Za-z0-9]*)(?:\s+([A-Za-z]+))?(?:\s+"([^"]*)")?(?:\s*=(?![=>])\s*(.*))?$/;
 /** `TAG = value`: a state line, kept apart from the drawing so templates touch only these. */
-const STATE = /^([A-Za-z][\w.-]*)\s*=\s*(.*)$/;
+// The `=` must not start `==>` / `===`, which are power cables, not states.
+const STATE = /^([A-Za-z][\w.-]*)\s*=(?![=>])\s*(.*)$/;
 const CLASSDEF = /^classDef\s+([\w-]+(?:\s*,\s*[\w-]+)*)\s+(.+)$/;
 const CLASS = /^class\s+([A-Za-z][\w.-]*(?:\s*,\s*[A-Za-z][\w.-]*)*)\s+([\w-]+)$/;
 const STYLE = /^style\s+([A-Za-z][\w.-]*)\s+(.+)$/;
@@ -45,16 +46,18 @@ const LEVEL = /^level\s+([A-Za-z][\w.-]*)\s+(.+)$/;
 const COLOUR = /^(#[0-9a-f]{3,8}|(?:rgb|rgba|hsl|hsla)\([^)]*\))$/i;
 const NUMBER = /^-?\d+(?:[.,]\d+)?/;
 /** Equipment that can show a gradient or level. */
-export const FILLABLE = new Set(['tank', 'vessel', 'drum', 'column', 'reactor']);
+export const FILLABLE = new Set(['tank', 'vessel', 'drum', 'column', 'reactor', 'battery', 'collector']);
 const STREAM_PROPS = /^stream\s+("[^"]*"|[^\s{]+)\s*\{(.*)\}$/;
 const ID = /^[A-Za-z][\w.-]*$/;
 /** A line operator with an optional `|label|` straight after it. */
-const LINK = /\s*(-->|---|-\.->|-\.-)(?:\|([^|]*)\|)?\s*/;
+const LINK = /\s*(-->|---|-\.->|-\.-|==>|===)(?:\|([^|]*)\|)?\s*/;
 const LINK_KIND: Record<string, [LineKind, boolean]> = {
   '-->': ['process', true],
   '---': ['connection', false],
   '-.->': ['signal', true],
   '-.-': ['signal', false],
+  '==>': ['electric', true],
+  '===': ['electric', false],
 };
 
 /** True when the diagram text (front matter and comments removed) starts with `pid`. */

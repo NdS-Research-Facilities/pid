@@ -4,6 +4,8 @@ import type { Dir } from '@mermaid-js/core/layout';
 export const EQUIPMENT_TYPES = [
   'block', 'tank', 'vessel', 'drum', 'column', 'reactor', 'pump', 'compressor',
   'exchanger', 'valve', 'valve3', 'feed', 'product', 'instrument', 'tee',
+  // Solar and electrical
+  'collector', 'pv', 'inverter', 'battery', 'breaker', 'meter', 'grid', 'consumer',
 ] as const;
 export type EquipmentType = (typeof EQUIPMENT_TYPES)[number];
 
@@ -88,9 +90,10 @@ export interface StreamProperty {
 
 /**
  * What a line carries: `process` piping (`-->`), an instrument's `connection` to the process
- * (`---`, a thin solid line), or an electrical `signal` (`-.->`, `-.-`, dashed).
+ * (`---`, a thin solid line), an electrical `signal` (`-.->`, `-.-`, dashed), or `electric`
+ * power wiring (`==>`, `===`).
  */
-export type LineKind = 'process' | 'connection' | 'signal';
+export type LineKind = 'process' | 'connection' | 'signal' | 'electric';
 
 /** One point of a vessel's colour gradient: a reading on the colour scale, or a colour. */
 export interface GradientStop {

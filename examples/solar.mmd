@@ -1,0 +1,30 @@
+pid LR
+  title Solar thermal and PV
+  %% ── Solar thermal (water) ───────────────────────────────────────────────
+  SC-1: collector "Solar collector"
+  gradient SC-1 74 °C, 58 °C
+  P-201: pump "Solar pump" = on
+  T-201: tank "Solar buffer"
+  gradient T-201 61 °C, 47 °C, 32 °C
+  D-201: product "To heating"
+  TT-201: instrument "Collector" = 72.4 °C
+  SC-1 -->|1| P-201 -->|2| T-201 --> D-201
+  SC-1 --- TT-201
+
+  %% ── PV and its wiring: ==> carries power (arrow = direction), === without arrow ──
+  PV-1: pv "PV array" = 3.4 kW
+  Q-1: breaker "DC isolator" = closed
+  INV-1: inverter "Inverter" = 3.2 kW
+  BAT-1: battery "Battery" = charging
+  level BAT-1 64 %
+  Q-2: breaker "AC breaker" = closed
+  M-1: meter "Grid meter" = export 1.1 kW
+  G-1: grid "Grid"
+  H-1: consumer "House" = 2.1 kW
+  Q-3: breaker "EV breaker" = open
+  EV-1: consumer "EV charger"
+  PV-1 ==>|DC| Q-1 ==> INV-1
+  INV-1 === BAT-1
+  INV-1 ==>|AC| Q-2 ==> M-1 ==> G-1
+  Q-2 ==> H-1
+  Q-2 ==> Q-3 ==> EV-1

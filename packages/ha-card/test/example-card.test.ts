@@ -47,6 +47,16 @@ const VALUES: Record<string, [string, Record<string, unknown>?]> = {
   'sensor.tank_temp_bottom': ['41.4'],
   'sensor.stripper_top_temp': ['96.1'],
   'sensor.stripper_bottom_temp': ['58.4'],
+  'sensor.collector_top_temp': ['68.2'],
+  'sensor.collector_bottom_temp': ['51.7'],
+  'sensor.pv_power': ['3.42'],
+  'switch.dc_isolator': ['on'],
+  'sensor.inverter_power': ['3.21'],
+  'sensor.battery_state': ['charging'],
+  'sensor.battery_soc': ['64'],
+  'sensor.grid_power': ['-1.1'],
+  'sensor.grid_power_abs': ['1.1'],
+  'sensor.house_power': ['2.1'],
 };
 
 describe('examples/all-capabilities.card.yaml', () => {
@@ -85,6 +95,9 @@ describe('examples/all-capabilities.card.yaml', () => {
       expect(svg).toContain('has-gradient has-level');
       expect(svg).toContain('73 %');
       expect(svg).toContain('78 °C');
+      expect(svg).toContain('3.4 kW');
+      expect(svg).toContain('export 1.1 kW');
+      expect(svg).toContain('blade blade-closed');
       expect(svg).toContain('href="/local/assets/heat-pump.png"');
       expect(svg.match(/class="custom-icon"/g)).toHaveLength(3);
       const clickable = [...root.querySelectorAll('.clickable')].map((el) => el.getAttribute('data-id'));

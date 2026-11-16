@@ -193,6 +193,29 @@ content: |
     stream 1 { T: ${round(states['sensor.raw_water_temp'], 1)} °C, F: ${round(states['sensor.raw_water_flow'], 0)} kg/h }
     stream 3 { T: ${round(states['sensor.preheater_outlet_temp'], 0)} °C; P: ${fixed(states['sensor.preheater_pressure'], 1)} bar }
 
+    %% ── Solar and electrical ─────────────────────────────────────────────────
+    SC-1: collector "Solar collector"
+    PV-1: pv "PV array"
+    Q-1: breaker "DC isolator"
+    INV-1: inverter "Inverter"
+    BAT-1: battery "Battery"
+    M-1: meter "Grid meter"
+    G-1: grid "Grid"
+    H-1: consumer "House"
+    SC-1 --> HP-1
+    PV-1 ==>|DC| Q-1 ==> INV-1 ==>|AC| M-1 ==> G-1
+    INV-1 === BAT-1
+    M-1 ==> H-1
+    INV-1 ==> HP-1
+    gradient SC-1 ${round(states['sensor.collector_top_temp'], 0)} °C, ${round(states['sensor.collector_bottom_temp'], 0)} °C
+    PV-1 = ${round(states['sensor.pv_power'], 1)} kW
+    Q-1 = ${states['switch.dc_isolator']}
+    INV-1 = ${round(states['sensor.inverter_power'], 1)} kW
+    BAT-1 = ${states['sensor.battery_state']}
+    level BAT-1 ${states['sensor.battery_soc']}
+    M-1 = ${if(states['sensor.grid_power'] < 0, 'export', 'import')} ${round(states['sensor.grid_power_abs'], 1)} kW
+    H-1 = ${round(states['sensor.house_power'], 1)} kW
+
     %% ── Contents: tank temperatures as a gradient, tank level as a fill ───────────
     gradient T-101 ${round(states['sensor.tank_temp_top'], 0)} °C, ${round(states['sensor.tank_temp_mid'], 0)} °C @50%, ${round(states['sensor.tank_temp_bottom'], 0)} °C @10%
     level T-101 ${states['sensor.tank_level']}

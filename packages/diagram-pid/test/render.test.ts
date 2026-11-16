@@ -205,12 +205,38 @@ describe('all-capabilities example', () => {
     expect(new Set(eq.flatMap((e) => (e.type === 'valve' ? [e.valveKind ?? 'gate'] : [])))).toEqual(new Set(VALVE_KINDS));
     expect(new Set(eq.flatMap((e) => (e.type === 'instrument' ? [e.location ?? 'field'] : [])))).toEqual(new Set(INSTRUMENT_LOCATIONS));
     expect(new Set(eq.flatMap((e) => (e.type === 'valve3' ? [e.bore ?? 'none'] : [])))).toEqual(new Set(['L', 'T', 'none']));
-    expect(new Set(model.streams.map((s) => `${s.kind}${s.arrow ? '>' : ''}`))).toEqual(new Set(['process>', 'connection', 'signal>', 'signal']));
+    expect(new Set(model.streams.map((s) => `${s.kind}${s.arrow ? '>' : ''}`))).toEqual(
+      new Set(['process>', 'connection', 'signal>', 'signal', 'electric>', 'electric']),
+    );
     expect(eq.some((e) => e.image) && eq.some((e) => e.icon) && eq.some((e) => e.classes) && eq.some((e) => e.style)).toBe(true);
     expect(model.streams.some((s) => s.lineNumber) && model.streams.some((s) => s.style) && model.linkStyleDefault).toBeTruthy();
     expect(model.streams[13]).toMatchObject({ source: 'HP-1', target: 'E-101' });
     expect(eq.find((e) => e.id === 'AT-106')?.name).toBe('pH (outlet)');
     expect(eq.some((e) => e.gradient) && eq.some((e) => e.level)).toBe(true);
+  });
+});
+
+describe('solar and electrical', () => {
+  it('reads power cables and keeps == apart from states', () => {
+    const { model, diagnostics } = parsePid(read('solar.mmd'));
+    expect(diagnostics).toEqual([]);
+    const cables = model.streams.filter((s) => s.kind === 'electric').map((s) => `${s.source}${s.arrow ? '>' : '-'}${s.target}`);
+    expect(cables).toEqual(['PV-1>Q-1', 'Q-1>INV-1', 'INV-1-BAT-1', 'INV-1>Q-2', 'Q-2>M-1', 'M-1>G-1', 'Q-2>H-1', 'Q-2>Q-3', 'Q-3>EV-1']);
+    expect(model.equipment.find((e) => e.id === 'PV-1')?.state?.raw).toBe('3.4 kW');
+    expect(model.equipment.find((e) => e.id === 'Q-2')?.state?.raw).toBe('closed');
+  });
+
+  it('reads breakers in the electrical sense: closed conducts', async () => {
+    const { breakerClosed } = await import('../src/state.js');
+    const b = (state: string) => parsePid(`pid\n  Q: breaker = ${state}\n`).model.equipment[0]!;
+    expect(['closed', 'on', 'ON', 'connected'].map((v) => breakerClosed(b(v)))).toEqual([true, true, true, true]);
+    expect(['open', 'off', 'tripped'].map((v) => breakerClosed(b(v)))).toEqual([false, false, false]);
+    expect(breakerClosed(b('unavailable'))).toBeUndefined();
+  });
+
+  it('shows a number on other equipment as written, not as a valve position', () => {
+    const { model } = parsePid('pid\n  PV-1: pv = 3.4\n');
+    expect(model.equipment[0]!.state?.kind).toBe('position');
   });
 });
 
@@ -289,6 +315,14 @@ describe('Mermaid v13 integration', () => {
         expect(psvLines).toHaveLength(2);
         expect(psvLines.join('')).not.toContain('stream-blocked');
         expect(svg).toMatch(/class="equipment valve state-closed"/);
+      }
+      if (file === 'solar.mmd') {
+        expect(svg.match(/class="stream electric/g)).toHaveLength(9);
+        expect(svg.match(/class="stream electric stream-blocked"/g)).toHaveLength(2); // around the open Q-3
+        expect(svg.match(/class="blade blade-closed"/g)).toHaveLength(2);
+        expect(svg.match(/class="blade blade-open"/g)).toHaveLength(1);
+        expect(svg).toContain('stroke="#ef6c00"');
+        expect(svg).toContain('3.4 kW');
       }
       if (file === 'gradients.mmd') {
         expect(svg.match(/class="equipment [a-z]+ has-gradient/g)!.length).toBe(9);

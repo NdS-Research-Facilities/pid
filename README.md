@@ -63,11 +63,13 @@ option (actions, icon packs, image base, theme).
 | `A --> B -->\|1\| C` | Process line; `\|1\|` is the stream tag |
 | `A --- B` | Instrument connection to the process (thin line) |
 | `A -.-> B`, `A -.- B` | Signal line (dashed), with or without arrow |
+| `A ==> B`, `A === B` | Electrical power cable (orange), with or without arrow (direction of power) |
 | `stream 1 { T: 25 °C, F: 1200 kg/h }` | Property table shown with stream `1` |
 | `%% comment` | Comment |
 
 **Equipment types:** `block tank vessel drum column reactor pump compressor exchanger valve
-valve3 feed product instrument tee`.
+valve3 feed product instrument tee`, and for solar and electrical installations `collector pv
+inverter battery breaker meter grid consumer` (see below).
 
 ### Tees and crossings
 
@@ -135,9 +137,41 @@ The tag is drawn inside the bubble, ISA-5.1 style: function letters over the loo
 
   ![L-port and T-port 3-way valves](docs/images/three-way-valves.png)
 
+### Solar and electrical
+
+| Type | Draws | State |
+| --- | --- | --- |
+| `collector` | solar thermal collector (water): a panel with its absorber pipe | any reading; takes a `gradient` |
+| `pv` | photovoltaic panel or array: a grid of cells | any reading, e.g. `3.4 kW` |
+| `inverter` | DC/AC inverter (IEC: diagonal, `=` and `~`) | any reading |
+| `battery` | battery; `level` shows its state of charge (green) | any reading, e.g. `charging` |
+| `breaker` | breaker or isolator; the blade is drawn closed or open | `closed`/`on` conducts, `open`/`off`/`tripped` isolates |
+| `meter` | energy meter | any reading |
+| `grid` | the utility grid (a pylon) | |
+| `consumer` | the house or load the power goes to | any reading |
+
+Power cables are `==>` (with the direction of power flow) and `===`, drawn as solid orange
+lines; `linkStyle` recolours them. A breaker that is open dashes the cables on it, as a closed
+valve does its pipes. Note the electrical sense: a **closed** breaker conducts.
+
+```
+PV-1: pv "PV array" = 3.4 kW
+Q-1: breaker "DC isolator" = closed
+INV-1: inverter "Inverter" = 3.2 kW
+BAT-1: battery "Battery" = charging
+level BAT-1 64 %
+PV-1 ==>|DC| Q-1 ==> INV-1 ==>|AC| M-1 ==> G-1
+INV-1 === BAT-1
+```
+
+![Solar thermal and PV](docs/images/solar.png)
+
+[`examples/solar.mmd`](examples/solar.mmd) has the full example.
+
 ### Gradients and levels
 
-Tanks, vessels, drums, columns and reactors can show their contents:
+Tanks, vessels, drums, columns, reactors, solar collectors and batteries can show their
+contents:
 
 ```
 gradient T-1 64 °C, 52 °C, 38 °C, 27 °C        %% readings, top to bottom

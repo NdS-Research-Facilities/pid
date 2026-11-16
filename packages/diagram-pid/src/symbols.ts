@@ -85,6 +85,76 @@ export const SYMBOLS: Record<EquipmentType, SymbolDef> = {
     ],
   },
   instrument: { width: 42, height: 42, parts: [{ tag: 'circle', attrs: { cx: 21, cy: 21, r: 20 }, fill: true }] },
+  // Solar thermal collector (water): a panel with the absorber pipe meandering through it.
+  collector: {
+    width: 72,
+    height: 46,
+    parts: [
+      { tag: 'rect', attrs: { x: 0, y: 0, width: 72, height: 46, rx: 2 }, fill: true },
+      // The meander keeps to the right two thirds: the left is where gradient readings go.
+      line('M28 8 H66 V16 H30 V24 H66 V32 H30 V40 H68'),
+    ],
+  },
+  // Photovoltaic panel or array: a grid of cells.
+  pv: {
+    width: 72,
+    height: 46,
+    parts: [
+      { tag: 'rect', attrs: { x: 0, y: 0, width: 72, height: 46, rx: 2 }, fill: true },
+      line('M18 0 V46 M36 0 V46 M54 0 V46 M0 23 H72'),
+    ],
+  },
+  // Inverter (IEC 60617 converter): a square split by a diagonal, DC (=) in, AC (~) out.
+  inverter: {
+    width: 48,
+    height: 48,
+    parts: [
+      { tag: 'rect', attrs: { x: 0, y: 0, width: 48, height: 48 }, fill: true },
+      line('M0 48 L48 0'),
+      line('M7 11 H21 M7 16 H21'),
+      line('M27 36 A3.5 3.5 0 0 1 34 36 A3.5 3.5 0 0 0 41 36'),
+    ],
+  },
+  // Battery: a cell with its terminal on top; `level` shows the state of charge.
+  battery: {
+    width: 36,
+    height: 50,
+    parts: [
+      { tag: 'rect', attrs: { x: 12, y: 0, width: 12, height: 5, rx: 1 }, fill: true },
+      { tag: 'rect', attrs: { x: 0, y: 5, width: 36, height: 45, rx: 3 }, fill: true },
+    ],
+  },
+  // Breaker / isolator: two terminals; the blade is drawn closed or open from the state.
+  breaker: {
+    width: 40,
+    height: 20,
+    parts: [
+      { tag: 'circle', attrs: { cx: 4, cy: 14, r: 2.5 }, fill: true },
+      { tag: 'circle', attrs: { cx: 36, cy: 14, r: 2.5 }, fill: true },
+    ],
+  },
+  // Energy meter: a box with a dial.
+  meter: {
+    width: 44,
+    height: 34,
+    parts: [
+      { tag: 'rect', attrs: { x: 0, y: 0, width: 44, height: 34, rx: 2 }, fill: true },
+      line('M8 26 A14 14 0 0 1 36 26'),
+      line('M22 26 L30 14'),
+    ],
+  },
+  // The utility grid: a transmission pylon.
+  grid: {
+    width: 44,
+    height: 48,
+    parts: [line('M8 48 L22 2 L36 48 M2 12 H42 M13 24 H31 M10 36 H34 M13 24 L34 36 M31 24 L10 36')],
+  },
+  // A consumer: the house or load the power goes to.
+  consumer: {
+    width: 46,
+    height: 42,
+    parts: [shape('M0 18 L23 0 L46 18 V42 H0 Z'), { tag: 'rect', attrs: { x: 18, y: 26, width: 10, height: 16 }, fill: true }],
+  },
   // A tee: where branch lines join the pipe, marked with a connection dot.
   tee: { width: 8, height: 8, parts: [{ tag: 'circle', attrs: { cx: 4, cy: 4, r: 3.5 }, fill: false, ink: true }] },
   feed: { width: 70, height: 30, parts: [shape('M0 0 H55 L70 15 L55 30 H0 Z')] },
@@ -236,6 +306,10 @@ export function interiorOf(type: EquipmentType): Interior | undefined {
       return capsuleInterior(40, 150);
     case 'reactor':
       return capsuleInterior(64, 96);
+    case 'battery':
+      return { top: 5, bottom: 50, span: (y) => (y >= 5 && y <= 50 ? [0, 36] : undefined) };
+    case 'collector':
+      return { top: 0, bottom: 46, span: (y) => (y >= 0 && y <= 46 ? [0, 72] : undefined) };
     default:
       return undefined;
   }

@@ -96,6 +96,23 @@ pid LR
   FT-104 -.- FQI-104
   TT-107 -.-> HP-1
 
+  %% ── Solar and electrical: collector, PV, power cables (==> with direction, === without) ─
+  SC-1: collector "Solar collector"
+  gradient SC-1 68 °C, 52 °C
+  PV-1: pv "PV array" = 3.4 kW
+  Q-1: breaker "DC isolator" = closed
+  INV-1: inverter "Inverter" = 3.2 kW
+  BAT-1: battery "Battery" = charging
+  level BAT-1 64 %
+  M-1: meter "Grid meter" = export 1.1 kW
+  G-1: grid "Grid"
+  H-1: consumer "House" = 2.1 kW
+  SC-1 --> HP-1
+  PV-1 ==>|DC| Q-1 ==> INV-1 ==>|AC| M-1 ==> G-1
+  INV-1 === BAT-1
+  M-1 ==> H-1
+  INV-1 ==> HP-1
+
   %% ── Stream property tables, line numbers, line styles ──────────────────────
   stream 1 { T: 15 °C, F: 1200 kg/h }
   stream 3 { T: 85 °C; P: 3.2 bar }

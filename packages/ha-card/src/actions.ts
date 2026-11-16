@@ -17,7 +17,7 @@ export interface ActionConfig {
 export type ActionsConfig = Record<string, string | ActionConfig>;
 
 /** `TAG = …` or `TAG: type … = …`: a line that gives a tag its state. */
-const STATE_LINE = /^\s*([A-Za-z][\w.-]*)\s*(?::[^=]*)?=(.*)$/;
+const STATE_LINE = /^\s*([A-Za-z][\w.-]*)\s*(?::[^=]*)?=(?![=>])(.*)$/;
 
 /**
  * Tags whose state comes from exactly one entity, as their state line's templates read it:
