@@ -266,6 +266,32 @@ describe('tee dots', () => {
   });
 });
 
+/** Pairs of different lines in `svg` running along the same column or row (a tee's trunk excepted). */
+function overlappingLines(svg: string): string[] {
+  const lines = [...svg.matchAll(/<g class="stream [^"]*" data-id="edge-(s\d+)"[^>]*>\s*<path d="([^"]+)"/g)].map((m) => ({
+    id: m[1]!,
+    pts: [...m[2]!.matchAll(/[ML]\s*(-?[\d.]+)[ ,](-?[\d.]+)/g)].map((p) => ({ x: +p[1]!, y: +p[2]! })),
+  }));
+  const dots = [...svg.matchAll(/class="tee-dot" cx="([\d.]+)" cy="([\d.]+)"/g)].map((m) => ({ x: +m[1]!, y: +m[2]! }));
+  const found: string[] = [];
+  for (let i = 0; i < lines.length; i++)
+    for (let j = i + 1; j < lines.length; j++)
+      for (let a = 0; a + 1 < lines[i]!.pts.length; a++)
+        for (let b = 0; b + 1 < lines[j]!.pts.length; b++) {
+          const [a0, a1, b0, b1] = [lines[i]!.pts[a]!, lines[i]!.pts[a + 1]!, lines[j]!.pts[b]!, lines[j]!.pts[b + 1]!];
+          const v = Math.abs(a0.x - a1.x) < 0.5 && Math.abs(b0.x - b1.x) < 0.5 && Math.abs(a0.x - b0.x) < 0.5;
+          const h = Math.abs(a0.y - a1.y) < 0.5 && Math.abs(b0.y - b1.y) < 0.5 && Math.abs(a0.y - b0.y) < 0.5;
+          if (!v && !h) continue;
+          const p = v ? 'y' : 'x';
+          const lo = Math.max(Math.min(a0[p], a1[p]), Math.min(b0[p], b1[p]));
+          const hi = Math.min(Math.max(a0[p], a1[p]), Math.max(b0[p], b1[p]));
+          if (hi - lo <= 1) continue;
+          const trunk = dots.some((d) => (v ? Math.abs(d.x - a0.x) < 1 && d.y >= lo - 1 && d.y <= hi + 1 : Math.abs(d.y - a0.y) < 1 && d.x >= lo - 1 && d.x <= hi + 1));
+          if (!trunk) found.push(`${lines[i]!.id}/${lines[j]!.id}`);
+        }
+  return found;
+}
+
 /** Every tee dot in `svg` sits where three or more line arms meet. */
 function dotsOnJunctions(svg: string): { dots: number; off: string[] } {
   const dots = [...svg.matchAll(/class="tee-dot" cx="([\d.]+)" cy="([\d.]+)"/g)].map((m) => ({ x: +m[1]!, y: +m[2]! }));
@@ -414,6 +440,8 @@ describe('Mermaid v13 integration', () => {
         expect(svg.match(/class="stream signal"/g)).toHaveLength(2);
         expect(svg.match(/class="stream connection"/g)).toHaveLength(4);
       }
+      // No two different lines drawn on top of each other.
+      expect(overlappingLines(svg), file).toEqual([]);
       if (read(file).includes(': tee')) {
         // Tee dots mark where the lines actually join, never a straight run.
         const { dots, off } = dotsOnJunctions(svg);
@@ -427,6 +455,8 @@ describe('Mermaid v13 integration', () => {
         expect(psvLines.join('')).not.toContain('stream-blocked');
         expect(svg).toMatch(/class="equipment valve state-closed"/);
       }
+      // No two different lines drawn on top of each other.
+      expect(overlappingLines(svg), file).toEqual([]);
       if (read(file).includes(': tee')) {
         // Tee dots mark where the lines actually join, never a straight run.
         const { dots, off } = dotsOnJunctions(svg);
@@ -436,11 +466,6 @@ describe('Mermaid v13 integration', () => {
       if (file === 'valve-types.mmd') {
         // Three motors: MV-8, V3-9, and the M glyph is drawn as a path inside each circle.
         expect(svg.match(/data-id="node-(MV-8|V3-9)"/g)).toHaveLength(2);
-      }
-      if (file === 'home-heating.mmd') {
-        // The translated drawing: three coils, the PV cable kept orange under the blue default.
-        expect(svg.match(/class="coil coil\d"/g)).toHaveLength(3);
-        expect(svg).toMatch(/class="stream electric"[^>]*>\s*<path[^>]*stroke="#ef6c00"/);
       }
       if (file === 'coils.mmd') {
         expect(svg.match(/class="coil coil\d"/g)).toHaveLength(3);

@@ -72,19 +72,21 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
   const mirrored = new Set([...layout.placements].flatMap(([id, p]) => (p.mirror ? [id] : [])));
   // Streams first, so equipment sits on top of line ends. Their routes are settled before any is
   // drawn, so lines that cross without joining can hop over each other.
+  const slots = planSlots(model, layout, byId, mirrored);
   const routes = model.streams.flatMap((s) => {
     const edge = layout.edges.get(s.id);
     if (!edge || edge.points.length < 2) return [];
     const pts = edge.points.map((p) => ({ x: p.x, y: p.y }));
     const sides = endSides(model.direction, s, byId, mirrored, layout.coilSides);
-    attach(pts, false, layout, byId.get(s.source), sides.source, coilNozzle(layout, byId.get(s.source), s.sourceCoil, 'outlet'), portDepth(layout, s.source, s.sourcePort));
-    attach(pts, true, layout, byId.get(s.target), sides.target, coilNozzle(layout, byId.get(s.target), s.targetCoil, 'inlet'), portDepth(layout, s.target, s.targetPort));
+    attach(pts, false, layout, byId.get(s.source), sides.source, coilNozzle(layout, byId.get(s.source), s.sourceCoil, 'outlet'), portDepth(layout, s.source, s.sourcePort), slots.get(`${s.id}:source`));
+    attach(pts, true, layout, byId.get(s.target), sides.target, coilNozzle(layout, byId.get(s.target), s.targetCoil, 'inlet'), portDepth(layout, s.target, s.targetPort), slots.get(`${s.id}:target`));
     const others = [...layout.nodes].filter(([id]) => id !== s.source && id !== s.target).map(([, n]) => n);
     if (byId.get(s.source)?.type === 'tee') bendAtTee(pts, false, others);
     if (byId.get(s.target)?.type === 'tee') bendAtTee(pts, true, others);
     const drawn = dedupe(pts);
     return [{ s, edge, pts, drawn, d: polyline(drawn) }];
   });
+  separateOverlaps(routes, byId);
   // Where each tee's lines actually join, as drawn: its dots go there.
   const teeDots = new Map<string, Point[]>();
   for (const eq of model.equipment) {
@@ -596,6 +598,121 @@ function coilSide(layout: PidLayout, eq: Equipment, i: number, end: 'in' | 'out'
   return layout.coilSides.get(coilKey(eq.id, i, end)) ?? eq.coils?.[i]?.side ?? 'left';
 }
 
+/**
+ * Two different lines must not run along the same column or row: where the layout put two runs
+ * on one track over a stretch, the later run moves aside (each step by `LINE_GAP`) until it is
+ * clear. Lines of one tee share their trunk on purpose, and a run that ends on a symbol stays,
+ * so only inner runs move; the runs either side stretch with them and stay straight.
+ */
+function separateOverlaps(routes: { s: Stream; drawn: Point[]; d: PathData }[], byId: ReadonlyMap<string, Equipment>): void {
+  const tees = (s: Stream) => [s.source, s.target].filter((id) => byId.get(id)?.type === 'tee');
+  const shareTee = (a: Stream, b: Stream) => tees(a).some((t) => tees(b).includes(t));
+  const overlap = (a0: Point, a1: Point, b0: Point, b1: Point): boolean => {
+    const vertical = Math.abs(a0.x - a1.x) < 0.5 && Math.abs(b0.x - b1.x) < 0.5 && Math.abs(a0.x - b0.x) < 0.5;
+    const horizontal = Math.abs(a0.y - a1.y) < 0.5 && Math.abs(b0.y - b1.y) < 0.5 && Math.abs(a0.y - b0.y) < 0.5;
+    if (!vertical && !horizontal) return false;
+    const p = vertical ? 'y' : 'x';
+    const lo = Math.max(Math.min(a0[p], a1[p]), Math.min(b0[p], b1[p]));
+    const hi = Math.min(Math.max(a0[p], a1[p]), Math.max(b0[p], b1[p]));
+    return hi - lo > 1;
+  };
+  for (let round = 0; round < 6; round++) {
+    let moved = false;
+    routes.forEach((r, i) => {
+      for (let k = 1; k + 2 < r.drawn.length; k++) {
+        const [a0, a1] = [r.drawn[k]!, r.drawn[k + 1]!];
+        const hit = routes.some((o, j) => {
+          if (j >= i || shareTee(r.s, o.s)) return false;
+          for (let m = 0; m + 1 < o.drawn.length; m++) if (overlap(a0, a1, o.drawn[m]!, o.drawn[m + 1]!)) return true;
+          return false;
+        });
+        if (!hit) continue;
+        if (Math.abs(a0.x - a1.x) < 0.5) {
+          a0.x += LINE_GAP;
+          a1.x += LINE_GAP;
+        } else {
+          a0.y += LINE_GAP;
+          a1.y += LINE_GAP;
+        }
+        moved = true;
+      }
+    });
+    if (!moved) break;
+  }
+  for (const r of routes) r.d = polyline(r.drawn);
+}
+
+/** How far from its centre along a side a symbol can take lines, keeping clear of its corners. */
+function sideLimit(eq: Equipment, place: NodePlacement, across: boolean): number {
+  const radius = symbolFor(eq).round;
+  const round = radius === undefined ? undefined : radius * place.scale;
+  const symV = (across ? place.height : place.width) / 2;
+  const reach =
+    round !== undefined
+      ? round * 0.6
+      : eq.type === 'instrument'
+        ? symV / 2
+        : CENTRED.has(eq.type)
+          ? 0
+          : Math.max(0, symV - CORNER);
+  const limit = Math.max(reach, symV - Math.min(CORNER / 2, symV / 3));
+  // On a round symbol the end must stay on the circle.
+  return round !== undefined ? Math.min(limit, round - 2) : limit;
+}
+
+/**
+ * Where lines meet a symbol when several share one of its sides: spread evenly around the
+ * centre, ordered by where each heads once it leaves (the one going up takes the top point, the
+ * one going left the left point), so they neither overlap nor cross. Tees join their lines on
+ * purpose, and ports, coil nozzles and actuators have their own points: they are left alone.
+ * Keys are `streamId:source` / `streamId:target`.
+ */
+function planSlots(
+  model: PidModel,
+  layout: PidLayout,
+  byId: ReadonlyMap<string, Equipment>,
+  mirrored: ReadonlySet<string>,
+): Map<string, number> {
+  type End = { key: string; pull: number };
+  const groups = new Map<string, { eq: Equipment; across: boolean; ends: End[] }>();
+  for (const s of model.streams) {
+    const pts = layout.edges.get(s.id)?.points;
+    if (!pts || pts.length < 2) continue;
+    const sides = endSides(model.direction, s, byId, mirrored, layout.coilSides);
+    for (const atEnd of [false, true]) {
+      const eq = byId.get(atEnd ? s.target : s.source);
+      const fixedEnd = atEnd ? s.targetCoil !== undefined || sides.target : s.sourceCoil !== undefined || sides.source;
+      if (!eq || eq.type === 'tee' || fixedEnd) continue;
+      const node = layout.nodes.get(eq.id);
+      if (!node) continue;
+      const k = atEnd ? pts.length - 1 : 0;
+      const E = pts[k]!;
+      const P = pts[atEnd ? k - 1 : 1]!;
+      const Q = pts.length >= 3 ? pts[atEnd ? k - 2 : 2]! : P;
+      const across = Math.abs(E.y - P.y) < 0.5;
+      const U = (p: { x: number; y: number }) => (across ? p.x : p.y);
+      const V = (p: { x: number; y: number }) => (across ? p.y : p.x);
+      const sign = Math.sign(U(P) - U(node)) || 1;
+      const id = `${eq.id}:${across ? 'h' : 'v'}:${sign}`;
+      const group = groups.get(id) ?? { eq, across, ends: [] };
+      group.ends.push({ key: `${s.id}:${atEnd ? 'target' : 'source'}`, pull: V(Q) });
+      groups.set(id, group);
+    }
+  }
+  const out = new Map<string, number>();
+  for (const { eq, across, ends } of groups.values()) {
+    if (ends.length < 2) continue;
+    const node = layout.nodes.get(eq.id)!;
+    const place = layout.placements.get(eq.id)!;
+    const limit = sideLimit(eq, place, across);
+    const centre = across ? node.y : node.x;
+    const gap = Math.min(LINE_GAP, (2 * limit) / (ends.length - 1));
+    ends.sort((a, b) => a.pull - b.pull);
+    ends.forEach((e, n) => out.set(e.key, centre + (n - (ends.length - 1) / 2) * gap));
+  }
+  return out;
+}
+
 /** Compact symbols are met on their centre line; tall or wide ones anywhere near it. */
 const CENTRED: ReadonlySet<EquipmentType> = new Set([
   'pump', 'compressor', 'exchanger', 'valve', 'valve3', 'feed', 'product', 'instrument', 'tee',
@@ -603,6 +720,8 @@ const CENTRED: ReadonlySet<EquipmentType> = new Set([
 ]);
 /** Keep stream ends this far from a symbol's corners. */
 const CORNER = 20;
+/** The least distance between two lines meeting one side of a symbol. */
+const LINE_GAP = 8;
 /** How far outside the box a stream turns to line up with the symbol. */
 const STUB = 10;
 
@@ -621,6 +740,8 @@ function attach(
   fixed?: Point,
   /** How far from the centre the line ends, where the symbol's box reaches further (port C). */
   depthAt?: number,
+  /** Where along the symbol's side this line meets it, when several share that side. */
+  slot?: number,
 ): void {
   const node = eq && layout.nodes.get(eq.id);
   const place = eq && layout.placements.get(eq.id);
@@ -641,7 +762,7 @@ function attach(
   const round = side || radius === undefined ? undefined : radius * place.scale;
   const squareInstrument = eq.type === 'instrument' && !round;
   const reach = round ? round * 0.6 : side ? 0 : squareInstrument ? symV / 2 : CENTRED.has(eq.type) ? 0 : Math.max(0, symV - CORNER);
-  const v = fixed ? V(fixed) : Math.min(V(node) + reach, Math.max(V(node) - reach, V(E)));
+  const v = fixed ? V(fixed) : (slot ?? Math.min(V(node) + reach, Math.max(V(node) - reach, V(E))));
   // Lines run into a tee's centre; a round symbol is met on its circle; anything else on its box.
   const depth = depthAt ?? (eq.type === 'tee' ? 0 : round ? Math.sqrt(round * round - (v - V(node)) ** 2) : symU);
   const end = fixed ?? at(U(node) + sign * depth, v);
