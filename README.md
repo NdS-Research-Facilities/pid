@@ -366,8 +366,16 @@ package to `config/www/mdi.json` and set `icon_packs: { mdi: /local/mdi.json }`.
 heating (`CV`) feeds two underfloor heating circuits (*vloerverwarming*), kitchen and studio,
 each with its own pump, and the returns join before going back. The supply lines are orange,
 the returns blue (`linkStyle`). Its states are Home Assistant templates (the boiler burner and
-the two pump relays), so it is meant as the card's `content`; outside Home Assistant, as in this
-image, the templates show as written:
+the two pump relays), so it is meant as the card's `content`. In the card the line colours are
+live too: a circuit goes grey while its pump is off, and the main flow turns red while the burner
+fires, with templated `linkStyle` lines such as
+
+```
+linkStyle 1,2 stroke:${if(is_state('switch.keuken_cv_pomp_vv_lsc_plug_relay', 'on'), '#ef6c00', '#9e9e9e')}
+```
+
+Outside Home Assistant, as in this image, the templates show as written and the fixed colours
+stay:
 
 ![Home heating](docs/images/home-heating.png)
 

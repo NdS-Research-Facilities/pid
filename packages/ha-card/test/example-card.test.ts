@@ -135,3 +135,30 @@ describe('examples/all-capabilities.card.yaml', () => {
     }
   });
 });
+
+describe('examples/home-heating.mmd in the card', () => {
+  it('colours each circuit by its pump, and the main flow by the burner', async () => {
+    const content = readFileSync(`${import.meta.dirname}/../../../examples/home-heating.mmd`, 'utf8');
+    const card = document.createElement('pid-card') as PidCard;
+    document.body.appendChild(card);
+    card.setConfig({ type: 'custom:pid-card', content });
+    const e = (id: string, state: string): HassEntity => ({ entity_id: id, state, attributes: {}, last_changed: '', last_updated: '' });
+    const states = Object.fromEntries(
+      [
+        e('switch.keuken_cv_pomp_vv_lsc_plug_relay', 'on'),
+        e('switch.studio_cv_pomp_vv_lsc_plug_relay', 'off'),
+        e('binary_sensor.boiler_burner', 'on'),
+      ].map((x) => [x.entity_id, x]),
+    );
+    const done = new Promise((r) => card.addEventListener('pid-card-rendered', r, { once: true }));
+    card.hass = { states, themes: { darkMode: false, theme: 'default' }, language: 'en', callService: () => {} };
+    await done;
+    const root = card.shadowRoot!;
+    expect(root.querySelector<HTMLElement>('.error')!.hidden).toBe(true);
+    const stroke = (n: number) =>
+      root.querySelector(`[data-id="edge-s${n}"] path`)!.getAttribute('stroke');
+    expect(stroke(0)).toBe('#c62828'); // burner on: main flow red
+    expect([stroke(1), stroke(2), stroke(3)]).toEqual(['#ef6c00', '#ef6c00', '#5b8fd0']); // kitchen pump on
+    expect([stroke(5), stroke(6), stroke(7)]).toEqual(['#9e9e9e', '#9e9e9e', '#9e9e9e']); // studio pump off
+  });
+});
