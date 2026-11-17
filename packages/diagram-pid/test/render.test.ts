@@ -2,7 +2,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { icons } from '@mermaid-js/plugin-icons';
 import { createMermaid } from 'mermaid';
 import { describe, expect, it } from 'vitest';
-import { boreProblem, declarations, imageUrl, parsePid, parseState, pid } from '../src/index.js';
+import { boreProblem, declarations, imageUrl, junctions, parsePid, parseState, pid } from '../src/index.js';
 
 const examplesDir = new URL('../../../examples/', import.meta.url);
 const read = (name: string) => readFileSync(new URL(name, examplesDir), 'utf8');
@@ -253,6 +253,30 @@ describe('solar and electrical', () => {
   });
 });
 
+describe('tee dots', () => {
+  it('finds junctions: three or more arms, a straight run counting as two', () => {
+    // A trunk from the left that splits 40 px further on: up and right.
+    const trunk = [{ x: 0, y: 50 }, { x: 40, y: 50 }, { x: 40, y: 0 }];
+    const branch = [{ x: 0, y: 50 }, { x: 100, y: 50 }];
+    expect(junctions([trunk, branch])).toEqual([{ x: 40, y: 50 }]);
+    // A pipe that just continues through a point is not a junction.
+    expect(junctions([[{ x: 0, y: 0 }, { x: 50, y: 0 }], [{ x: 50, y: 0 }, { x: 100, y: 0 }]])).toEqual([]);
+    // Three lines meeting at one point from three sides is.
+    expect(junctions([[{ x: 0, y: 0 }, { x: 50, y: 0 }], [{ x: 50, y: 0 }, { x: 100, y: 0 }], [{ x: 50, y: 0 }, { x: 50, y: 40 }]])).toEqual([{ x: 50, y: 0 }]);
+  });
+});
+
+/** Every tee dot in `svg` sits where three or more line arms meet. */
+function dotsOnJunctions(svg: string): { dots: number; off: string[] } {
+  const dots = [...svg.matchAll(/class="tee-dot" cx="([\d.]+)" cy="([\d.]+)"/g)].map((m) => ({ x: +m[1]!, y: +m[2]! }));
+  const paths = [...svg.matchAll(/<g class="stream [^"]*"[^>]*>\s*<path d="([^"]+)"/g)].map((m) =>
+    [...m[1]!.matchAll(/[ML]\s*(-?[\d.]+)[ ,](-?[\d.]+)/g)].map((p) => ({ x: +p[1]!, y: +p[2]! })),
+  );
+  const found = junctions(paths);
+  const off = dots.filter((d) => !found.some((j) => Math.abs(j.x - d.x) < 1 && Math.abs(j.y - d.y) < 1)).map((d) => `${d.x},${d.y}`);
+  return { dots: dots.length, off };
+}
+
 describe('actuators', () => {
   it('puts motors and diaphragms on 2- and 3-way valves, and signals on 3-way valves', () => {
     const { model, diagnostics } = parsePid(read('valve-types.mmd'));
@@ -390,12 +414,24 @@ describe('Mermaid v13 integration', () => {
         expect(svg.match(/class="stream signal"/g)).toHaveLength(2);
         expect(svg.match(/class="stream connection"/g)).toHaveLength(4);
       }
+      if (read(file).includes(': tee')) {
+        // Tee dots mark where the lines actually join, never a straight run.
+        const { dots, off } = dotsOnJunctions(svg);
+        expect(dots, file).toBeGreaterThan(0);
+        expect(off, file).toEqual([]);
+      }
       if (file === 'valve-types.mmd') {
         // PSV-1 is closed, as relief valves are in service: its lines stay solid.
         const psvLines = svg.match(/<g class="stream process[^"]*" data-id="edge-s1[56]"/g) ?? [];
         expect(psvLines).toHaveLength(2);
         expect(psvLines.join('')).not.toContain('stream-blocked');
         expect(svg).toMatch(/class="equipment valve state-closed"/);
+      }
+      if (read(file).includes(': tee')) {
+        // Tee dots mark where the lines actually join, never a straight run.
+        const { dots, off } = dotsOnJunctions(svg);
+        expect(dots, file).toBeGreaterThan(0);
+        expect(off, file).toEqual([]);
       }
       if (file === 'valve-types.mmd') {
         // Three motors: MV-8, V3-9, and the M glyph is drawn as a path inside each circle.

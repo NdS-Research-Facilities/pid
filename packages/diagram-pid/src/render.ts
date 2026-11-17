@@ -82,8 +82,18 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     const others = [...layout.nodes].filter(([id]) => id !== s.source && id !== s.target).map(([, n]) => n);
     if (byId.get(s.source)?.type === 'tee') bendAtTee(pts, false, others);
     if (byId.get(s.target)?.type === 'tee') bendAtTee(pts, true, others);
-    return [{ s, edge, pts, d: polyline(dedupe(pts)) }];
+    const drawn = dedupe(pts);
+    return [{ s, edge, pts, drawn, d: polyline(drawn) }];
   });
+  // Where each tee's lines actually join, as drawn: its dots go there.
+  const teeDots = new Map<string, Point[]>();
+  for (const eq of model.equipment) {
+    if (eq.type !== 'tee') continue;
+    const paths = routes.filter((r) => r.s.source === eq.id || r.s.target === eq.id).map((r) => r.drawn);
+    const node = layout.nodes.get(eq.id);
+    const found = junctions(paths);
+    teeDots.set(eq.id, found.length || !node ? found : [{ x: node.x, y: node.y }]);
+  }
   const hopped = hopPaths(
     routes.map((r) => r.d),
     'arc',
@@ -163,7 +173,8 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     const scaled = place.scale !== 1 ? transforms(turned, scale(place.scale)) : turned;
     w.open('g', { transform: place.mirror ? transforms(scaled, translate(0, sym.height), scale(1, -1)) : scaled });
     if (eq.image || eq.icon) drawCustom(w, eq, place, look, styled, ctx);
-    for (const part of sym.parts) {
+    // A tee's dots are drawn where its lines join (below), not at its own position.
+    for (const part of eq.type === 'tee' ? [] : sym.parts) {
       // Lettering stays readable: undo the symbol's turn and mirror around the letter's centre.
       const keep = part.upright && (place.turn || place.mirror) ? part.upright : undefined;
       if (keep) {
@@ -182,6 +193,7 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     if (eq.type === 'breaker') drawBlade(w, eq, styled.paint);
     w.close();
     fillMarks?.();
+    for (const p of teeDots.get(eq.id) ?? []) w.leaf('circle', { class: 'tee-dot', cx: r(p.x), cy: r(p.y), r: 3.5, fill: styled.paint.border, stroke: 'none' });
     if (place.labels.bubble) drawBubble(w, place.labels.bubble, node, styled.text);
     drawLabels(w, layout, node, place, styled.text);
     w.close();
@@ -716,6 +728,34 @@ function longestMiddle(pts: readonly Point[]): Point {
     if (len > longest) [best, longest] = [k, len];
   }
   return { x: (pts[best]!.x + pts[best + 1]!.x) / 2, y: (pts[best]!.y + pts[best + 1]!.y) / 2 };
+}
+
+/**
+ * The points where three or more arms of these lines meet: real junctions. A line running
+ * straight through a point counts as two arms (a pipe that just continues), so only a branch
+ * leaving it, or lines meeting from three sides, makes a junction. Lines are orthogonal.
+ */
+export function junctions(paths: readonly (readonly Point[])[]): Point[] {
+  const segs: [Point, Point][] = [];
+  for (const path of paths) for (let k = 0; k + 1 < path.length; k++) segs.push([path[k]!, path[k + 1]!]);
+  const near = (a: Point, b: Point) => Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1;
+  const dir = (from: Point, to: Point) =>
+    Math.abs(from.x - to.x) > Math.abs(from.y - to.y) ? (to.x > from.x ? 'E' : 'W') : to.y > from.y ? 'S' : 'N';
+  const arms = (p: Point) => {
+    const found = new Set<string>();
+    for (const [a, b] of segs) {
+      if (near(p, a)) found.add(dir(a, b));
+      else if (near(p, b)) found.add(dir(b, a));
+      else if (Math.abs(a.y - b.y) < 0.5 && Math.abs(p.y - a.y) < 1 && p.x > Math.min(a.x, b.x) && p.x < Math.max(a.x, b.x))
+        found.add('E').add('W');
+      else if (Math.abs(a.x - b.x) < 0.5 && Math.abs(p.x - a.x) < 1 && p.y > Math.min(a.y, b.y) && p.y < Math.max(a.y, b.y))
+        found.add('N').add('S');
+    }
+    return found.size;
+  };
+  const out: Point[] = [];
+  for (const p of segs.flat()) if (!out.some((q) => near(p, q)) && arms(p) >= 3) out.push(p);
+  return out;
 }
 
 /** Distance from `p` to the segment `a`–`b`. */
