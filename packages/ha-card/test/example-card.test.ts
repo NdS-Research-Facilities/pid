@@ -137,7 +137,7 @@ describe('examples/all-capabilities.card.yaml', () => {
 });
 
 describe('examples/home-heating.mmd in the card', () => {
-  it('colours each circuit by its pump, and the main flow by the burner', async () => {
+  async function render(kitchen: string, studio: string, burner: string) {
     const content = readFileSync(`${import.meta.dirname}/../../../examples/home-heating.mmd`, 'utf8');
     const card = document.createElement('pid-card') as PidCard;
     document.body.appendChild(card);
@@ -145,9 +145,9 @@ describe('examples/home-heating.mmd in the card', () => {
     const e = (id: string, state: string): HassEntity => ({ entity_id: id, state, attributes: {}, last_changed: '', last_updated: '' });
     const states = Object.fromEntries(
       [
-        e('switch.keuken_cv_pomp_vv_lsc_plug_relay', 'on'),
-        e('switch.studio_cv_pomp_vv_lsc_plug_relay', 'off'),
-        e('binary_sensor.boiler_burner', 'on'),
+        e('switch.keuken_cv_pomp_vv_lsc_plug_relay', kitchen),
+        e('switch.studio_cv_pomp_vv_lsc_plug_relay', studio),
+        e('binary_sensor.boiler_burner', burner),
       ].map((x) => [x.entity_id, x]),
     );
     const done = new Promise((r) => card.addEventListener('pid-card-rendered', r, { once: true }));
@@ -155,10 +155,16 @@ describe('examples/home-heating.mmd in the card', () => {
     await done;
     const root = card.shadowRoot!;
     expect(root.querySelector<HTMLElement>('.error')!.hidden).toBe(true);
-    const stroke = (n: number) =>
-      root.querySelector(`[data-id="edge-s${n}"] path`)!.getAttribute('stroke');
-    expect(stroke(0)).toBe('#c62828'); // burner on: main flow red
-    expect([stroke(1), stroke(2), stroke(3)]).toEqual(['#ef6c00', '#ef6c00', '#5b8fd0']); // kitchen pump on
-    expect([stroke(5), stroke(6), stroke(7)]).toEqual(['#9e9e9e', '#9e9e9e', '#9e9e9e']); // studio pump off
+    // Lines in written order: m1-m4 main flow, k1 kitchen, s1 studio, r1-r4 returns.
+    return [...Array(10).keys()].map((n) => root.querySelector(`[data-id="edge-s${n}"] path`)!.getAttribute('stroke'));
+  }
+  const [red, orange, grey, blue] = ['#c62828', '#ef6c00', '#9e9e9e', '#5b8fd0'];
+
+  it('burner on: main flow and running circuits red, a stopped circuit grey, returns blue', async () => {
+    expect(await render('on', 'off', 'on')).toEqual([red, red, red, red, red, grey, blue, blue, blue, blue]);
+  });
+
+  it('burner off: main flow and running circuits orange', async () => {
+    expect(await render('on', 'off', 'off')).toEqual([orange, orange, orange, orange, orange, grey, blue, blue, blue, blue]);
   });
 });

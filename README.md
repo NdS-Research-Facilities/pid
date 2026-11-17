@@ -126,6 +126,9 @@ style f2 stroke-dasharray:4 2                %% one line's own style
 linkStyle r1 stroke-width:3px                %% linkStyle and pipe take names too
 ```
 
+A class that is not a plain name, such as a template not filled in outside Home Assistant, is
+ignored, so a fixed class written before it stays in effect.
+
 A line takes `linkStyle default` first, then its classes, then its own `style` / `linkStyle`;
 blocking (a closed valve, an open breaker) still dashes it. Each class is also written as an SVG
 class, `class-<name>`. In the card a class name can come from a template, so a whole circuit
@@ -386,19 +389,25 @@ package to `config/www/mdi.json` and set `icon_packs: { mdi: /local/mdi.json }`.
 ### Example: home heating
 
 [`examples/home-heating.mmd`](examples/home-heating.mmd) is a real installation: the central
-heating (`CV`) feeds two underfloor heating circuits (*vloerverwarming*), kitchen and studio,
-each with its own pump, and the returns join before going back. The supply lines are orange,
-the returns blue (`linkStyle`). Its states are Home Assistant templates (the boiler burner and
-the two pump relays), so it is meant as the card's `content`. In the card the line colours are
-live too: a circuit goes grey while its pump is off, and the main flow turns red while the burner
-fires, with templated `linkStyle` lines such as
+heating (`CV`) feeds a solar buffer and two underfloor heating circuits (*vloerverwarming*),
+kitchen and studio, each with its own pump, and the returns join before going back. Its states
+are Home Assistant templates (the boiler burner and the two pump relays), so it is meant as the
+card's `content`.
+
+Every line is named and styled by class. Fixed classes come first (flow `warm`, returns
+`return`); live classes after them switch whole lines in the card: the flow turns `hot` while
+the burner fires, and a circuit goes `off` (grey) while its pump stands still:
 
 ```
-linkStyle 1,2 stroke:${if(is_state('switch.keuken_cv_pomp_vv_lsc_plug_relay', 'on'), '#ef6c00', '#9e9e9e')}
+CV m1@--> T-1
+P-1 k1@--> VV-Keuken
+class m1,m2,m3,m4,k1,s1 warm
+class m1,m2,m3,m4 ${if(is_state('binary_sensor.boiler_burner', 'on'), 'hot', 'warm')}
+class k1 ${if(is_state('switch.keuken_cv_pomp_vv_lsc_plug_relay', 'on'), if(is_state('binary_sensor.boiler_burner', 'on'), 'hot', 'warm'), 'off')}
 ```
 
-Outside Home Assistant, as in this image, the templates show as written and the fixed colours
-stay:
+Outside Home Assistant, as in this image, the templates are not filled in: those `class` lines
+are ignored and the fixed classes stay.
 
 ![Home heating](docs/images/home-heating.png)
 

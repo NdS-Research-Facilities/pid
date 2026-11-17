@@ -283,6 +283,14 @@ describe('line classes', () => {
     expect(model.equipment.some((e) => ['f1', 'f2', 'r1', 'b1'].includes(e.id))).toBe(false);
   });
 
+  it('ignores a class that is an unfilled template, keeping the classes before it', () => {
+    const { model, diagnostics } = parsePid(
+      "pid\n  classDef warm stroke:#ef6c00\n  A k1@--> B\n  class k1 warm\n  class k1 ${if(is_state('switch.p', 'on'), 'hot', 'off')}\n",
+    );
+    expect(diagnostics).toEqual([]);
+    expect(model.streams[0]!.classes).toEqual(['warm']);
+  });
+
   it('reports duplicate names, names shared with equipment, and unknown names', () => {
     const msgs = parsePid('pid\n  A x@--> B\n  B x@--> C\n  C A@--> D\n  linkStyle nope stroke:#f00\n').diagnostics.map((d) => d.message);
     expect(msgs).toEqual([
@@ -541,9 +549,12 @@ describe('Mermaid v13 integration', () => {
         expect(svg.match(/data-id="node-(MV-8|V3-9)"/g)).toHaveLength(2);
       }
       if (file === 'home-heating.mmd') {
-        // Two pumped circuits; supply and returns are pipes, none of them a power cable.
+        // Two pumped circuits and a solar buffer; every line a named pipe in a class. Outside Home
+        // Assistant the live classes are not filled in, so the fixed ones stay: flow warm, returns.
         expect(svg).not.toContain('stream electric');
-        expect(svg.match(/class="stream process/g)).toHaveLength(8);
+        expect(svg.match(/class="stream process/g)).toHaveLength(10);
+        expect(svg.match(/class="stream process class-warm"/g)).toHaveLength(6);
+        expect(svg.match(/class="stream process class-return"/g)).toHaveLength(4);
         expect(svg.match(/class="tee-dot"/g)!.length).toBeGreaterThanOrEqual(2);
       }
       if (file === 'coils.mmd') {

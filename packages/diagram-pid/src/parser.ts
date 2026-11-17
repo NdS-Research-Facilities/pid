@@ -29,7 +29,10 @@ const EQUIPMENT = /^([A-Za-z][\w.-]*)\s*:\s*([A-Za-z][A-Za-z0-9]*)(?:\s+([A-Za-z
 // The `=` must not start `==>` / `===`, which are power cables, not states.
 const STATE = /^([A-Za-z][\w.-]*)\s*=(?![=>])\s*(.*)$/;
 const CLASSDEF = /^classDef\s+([\w-]+(?:\s*,\s*[\w-]+)*)\s+(.+)$/;
-const CLASS = /^class\s+([A-Za-z][\w.-]*(?:\s*,\s*[A-Za-z][\w.-]*)*)\s+([\w-]+)$/;
+// The class may be anything here: an unfilled template (`${if(…)}` outside Home Assistant) is
+// ignored rather than an error, as linkStyle drops values it cannot use.
+const CLASS = /^class\s+([A-Za-z][\w.-]*(?:\s*,\s*[A-Za-z][\w.-]*)*)\s+(.+)$/;
+const CLASS_NAME = /^[\w-]+$/;
 const STYLE = /^style\s+([A-Za-z][\w.-]*)\s+(.+)$/;
 const IMAGE = /^image\s+([A-Za-z][\w.-]*)\s+(\S+)(?:\s+(\d+)(?:x(\d+))?)?$/;
 const ICON = /^icon\s+([A-Za-z][\w.-]*)\s+([a-z0-9-]+:[a-z0-9-]+)(?:\s+(\d+))?$/i;
@@ -183,7 +186,8 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
       continue;
     } else if ((m = CLASS.exec(line))) {
       // Resolved once every line is read: a named line takes it, anything else is equipment.
-      for (const id of m[1]!.split(',')) styling.push({ id: id.trim(), cls: m[2]!, start, end });
+      const cls = m[2]!.trim();
+      if (CLASS_NAME.test(cls)) for (const id of m[1]!.split(',')) styling.push({ id: id.trim(), cls, start, end });
       continue;
     } else if ((m = STYLE.exec(line))) {
       styling.push({ id: m[1]!, decls: declarations(m[2]!), start, end });

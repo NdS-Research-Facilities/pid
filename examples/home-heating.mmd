@@ -2,7 +2,7 @@ pid LR
   %% ── Equipment ─────────────────────────────────────────────────────────── 
   CV: block "Central heating" = ${states['binary_sensor.boiler_burner']}
   icon CV mdi:heat-pump-outline 86 
-
+  T-201: tank "Solar buffer"
   P-1: pump "VV pump keuken" = ${states['switch.keuken_cv_pomp_vv_lsc_plug_relay']}
   VV-Keuken: block "Vloerverwarming" 
   icon VV-Keuken mdi:heating-coil 48 
@@ -11,25 +11,33 @@ pid LR
   icon VV-Studio mdi:heating-coil 48 
   T-1: tee
   T-2: tee
-
   %% ── connections ───────────────────────────────────────────────────────────
-  CV --> T-1 --> P-1 --> VV-Keuken
-  VV-Keuken --> T-2
-  T-2 --> CV
-  T-1 --> P-2 --> VV-Studio
-  VV-Studio --> T-2 
-
+  CV m1@--> T-1
+  T-1 m2@--> T-201
+  T-1 m3@--> P-1
+  T-1 m4@--> P-2
+  P-1 k1@--> VV-Keuken
+  P-2 s1@--> VV-Studio
+  %% ── returns ────────────────────────
+  T-201 r1@--> T-2
+  VV-Keuken r2@--> T-2
+  VV-Studio r3@--> T-2
+  T-2 r4@--> CV
+  
   %% ── The drawing's colours ───────────────────────────────────────────────
   classDef blue fill:#7da7d9,stroke:#4a78b5
   classDef orange fill:#ff8a1f,stroke:#e06c00
-  linkStyle default stroke:#5b8fd0
-  linkStyle 0,1,2,5,6 stroke:#ef6c00
+  classDef white fill:#ffffff,stroke:#ff0000
+  %% ── Line classes: hot while the burner fires, warm otherwise, off while a pump stands still ──
+  classDef hot    stroke:#c62828
+  classDef warm   stroke:#ef6c00
+  classDef off    stroke:#9e9e9e
+  classDef return stroke:#5b8fd0
+  class m1,m2,m3,m4,k1,s1 warm
+  class r1,r2,r3,r4 return
 
-  %% ── Live line colours (in the card): a circuit goes grey while its pump is off, ──
-  %% ── and the main flow turns red while the burner fires. These come after the     ──
-  %% ── fixed colours above, so they win; outside Home Assistant those stay.         ──
-  linkStyle 1,2 stroke:${if(is_state('switch.keuken_cv_pomp_vv_lsc_plug_relay', 'on'), '#ef6c00', '#9e9e9e')}
-  linkStyle 3 stroke:${if(is_state('switch.keuken_cv_pomp_vv_lsc_plug_relay', 'on'), '#5b8fd0', '#9e9e9e')}
-  linkStyle 5,6 stroke:${if(is_state('switch.studio_cv_pomp_vv_lsc_plug_relay', 'on'), '#ef6c00', '#9e9e9e')}
-  linkStyle 7 stroke:${if(is_state('switch.studio_cv_pomp_vv_lsc_plug_relay', 'on'), '#5b8fd0', '#9e9e9e')}
-  linkStyle 0 stroke:${if(is_state('binary_sensor.boiler_burner', 'on'), '#c62828', '#ef6c00')}
+  %% ── Live line classes (in the card). They come after the fixed classes above, so they win;
+  %% ── outside Home Assistant the templates are not filled in and the fixed classes stay.
+  class m1,m2,m3,m4 ${if(is_state('binary_sensor.boiler_burner', 'on'), 'hot', 'warm')}
+  class k1 ${if(is_state('switch.keuken_cv_pomp_vv_lsc_plug_relay', 'on'), if(is_state('binary_sensor.boiler_burner', 'on'), 'hot', 'warm'), 'off')}
+  class s1 ${if(is_state('switch.studio_cv_pomp_vv_lsc_plug_relay', 'on'), if(is_state('binary_sensor.boiler_burner', 'on'), 'hot', 'warm'), 'off')}

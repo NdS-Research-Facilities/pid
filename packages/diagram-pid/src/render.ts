@@ -95,9 +95,9 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     const node = layout.nodes.get(eq.id);
     const found = junctions(paths);
     teeDots.set(eq.id, found.length || !node ? found : [{ x: node.x, y: node.y }]);
-    // With one junction, the tee's lines all start or end there, so each is drawn up to the dot
-    // and not along a stub to the tee's layout position (where colours would change instead).
-    if (found.length === 1) meetAt(routes.filter((r) => r.s.source === eq.id || r.s.target === eq.id), eq.id, found[0]!);
+    // The tee's lines start or end at its dots, not along a stub to its layout position (where a
+    // line's colour would change instead).
+    if (found.length) joinAtDots(routes.filter((r) => r.s.source === eq.id || r.s.target === eq.id), eq.id, found);
   }
   const hopped = hopPaths(
     routes.map((r) => r.d),
@@ -613,32 +613,67 @@ function along(path: readonly Point[], p: Point): number {
   return -1;
 }
 
-/**
- * Redraws a tee's lines so they all meet at its junction `j`: a line that passes `j` on its way
- * to the tee's layout position stops (or starts) at `j`; a line that leaves the tee's position
- * away from `j` gets the stretch from `j` added, so that stretch is drawn once, as part of it.
- */
-function meetAt(routes: { s: Stream; drawn: Point[]; d: PathData }[], tee: string, j: Point): void {
-  const copy = (p: Point): Point => ({ x: p.x, y: p.y });
-  // Each line oriented from the tee outwards.
-  const outward = routes.map((r) => (r.s.source === tee ? r.drawn.map(copy) : [...r.drawn].reverse().map(copy)));
-  // The stretch from the junction back to the tee's position, from a line that passes it.
-  let trunk: Point[] | undefined;
-  for (const out of outward) {
-    const k = along(out, j);
-    if (k >= 0) {
-      trunk = [copy(j), ...out.slice(0, k + 1).reverse()];
-      break;
-    }
+/** Distance along `path` from its start to `p`, which lies on it. */
+function distanceAlong(path: readonly Point[], p: Point): number {
+  let total = 0;
+  for (let k = 0; k + 1 < path.length; k++) {
+    const [a, b] = [path[k]!, path[k + 1]!];
+    if (toSegment(p, a, b) < 1) return total + Math.hypot(p.x - a.x, p.y - a.y);
+    total += Math.hypot(b.x - a.x, b.y - a.y);
   }
-  if (!trunk) return;
+  return Infinity;
+}
+
+/**
+ * Redraws a tee's lines so each starts or ends at a dot instead of running on to the tee's layout
+ * position. Each line is cut where it leaves the shared trunk (the farthest dot on its way out);
+ * a line that leaves the tee's position away from every dot gets the stretch from the nearest dot.
+ * The trunk between the dots is drawn once, as part of the line on the tee's single side: the one
+ * line in (a distributing tee) or the one line out (a collecting tee). Only straight trunks are
+ * redrawn; a tee whose dots do not lie on one line keeps its drawing.
+ */
+function joinAtDots(routes: { s: Stream; drawn: Point[]; d: PathData }[], tee: string, dots: readonly Point[]): void {
+  const copy = (p: Point): Point => ({ x: p.x, y: p.y });
+  // Each line oriented from the tee outwards; all start at the tee's layout position.
+  const outward = routes.map((r) => (r.s.source === tee ? r.drawn.map(copy) : [...r.drawn].reverse().map(copy)));
+  const centre = outward[0]?.[0];
+  if (!centre) return;
+  const onLine = [centre, ...dots];
+  const straight = onLine.every((p) => Math.abs(p.x - centre.x) < 1) || onLine.every((p) => Math.abs(p.y - centre.y) < 1);
+  if (dots.length > 1 && !straight) return;
+  const nearest = [...dots].sort((a, b) => Math.hypot(a.x - centre.x, a.y - centre.y) - Math.hypot(b.x - centre.x, b.y - centre.y))[0]!;
+  // The farthest dot each line passes on its way out: where it leaves the trunk.
+  const leaves = outward.map((out) => {
+    let best: Point | undefined;
+    let far = -1;
+    for (const d of dots) {
+      const at = distanceAlong(out, d);
+      if (at !== Infinity && at > far) [best, far] = [d, at];
+    }
+    return best;
+  });
+  // The trunk's owner: the one line on the tee's single side; with several on both sides, the
+  // first line in (the flow arriving at the tee).
+  const ins = routes.filter((r) => r.s.target === tee);
+  const outs = routes.filter((r) => r.s.source === tee);
+  const single = ins.length === 1 ? ins[0] : outs.length === 1 ? outs[0] : (ins[0] ?? routes[0]);
+  // …and it must pass a dot itself, to carry the trunk on from there.
+  const owner = single && leaves[routes.indexOf(single)] ? routes.indexOf(single) : leaves.findIndex((l) => l !== undefined);
   routes.forEach((r, i) => {
     const out = outward[i]!;
-    const k = along(out, j);
-    const next =
-      k >= 0
-        ? [copy(j), ...out.slice(k + 1)] // passes the junction: start there
-        : [...trunk!.map(copy), ...out.slice(1)]; // leaves away from it: add the stretch from it
+    const leave = leaves[i];
+    let next: Point[];
+    if (leave) {
+      const k = along(out, leave);
+      next = [copy(leave), ...out.slice(k + 1)];
+      if (i === owner && dots.length > 1) {
+        // Carry the trunk: from the dot farthest from where this line leaves it.
+        const end = [...dots].sort((a, b) => Math.hypot(b.x - leave.x, b.y - leave.y) - Math.hypot(a.x - leave.x, a.y - leave.y))[0]!;
+        next = [copy(end), ...next];
+      }
+    } else {
+      next = [copy(nearest), ...out];
+    }
     const drawn = dedupe(next);
     r.drawn = r.s.source === tee ? drawn : drawn.reverse();
     r.d = polyline(r.drawn);
