@@ -292,6 +292,20 @@ function overlappingLines(svg: string): string[] {
   return found;
 }
 
+/** Line ends at a tee's layout position where that tee's dot is elsewhere: there should be none. */
+function staleTeeEnds(svg: string): string[] {
+  const tees = [...svg.matchAll(/class="equipment tee[^"]*" data-id="node-([^"]+)"[^>]*>\s*<g transform="translate\(([\d.]+),([\d.]+)\)"/g)].map(
+    (m) => ({ id: m[1]!, x: +m[2]! + 4, y: +m[3]! + 4 }),
+  );
+  const dots = [...svg.matchAll(/class="tee-dot" cx="([\d.]+)" cy="([\d.]+)"/g)].map((m) => ({ x: +m[1]!, y: +m[2]! }));
+  const ends = [...svg.matchAll(/<g class="stream [^"]*" data-id="edge-(s\d+)"[^>]*>\s*<path d="([^"]+)"/g)].flatMap((m) => {
+    const p = [...m[2]!.matchAll(/[ML]\s*(-?[\d.]+)[ ,](-?[\d.]+)/g)].map((q) => ({ x: +q[1]!, y: +q[2]! }));
+    return [{ id: m[1]!, ...p[0]! }, { id: m[1]!, ...p[p.length - 1]! }];
+  });
+  const near = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1;
+  return tees.filter((t) => !dots.some((d) => near(d, t))).flatMap((t) => ends.filter((e) => near(e, t)).map((e) => `${e.id}@${t.id}`));
+}
+
 /** Every tee dot in `svg` sits where three or more line arms meet. */
 function dotsOnJunctions(svg: string): { dots: number; off: string[] } {
   const dots = [...svg.matchAll(/class="tee-dot" cx="([\d.]+)" cy="([\d.]+)"/g)].map((m) => ({ x: +m[1]!, y: +m[2]! }));
@@ -447,6 +461,8 @@ describe('Mermaid v13 integration', () => {
         const { dots, off } = dotsOnJunctions(svg);
         expect(dots, file).toBeGreaterThan(0);
         expect(off, file).toEqual([]);
+        // …and the tee's lines start or end at the dot, so a line's colour changes there.
+        expect(staleTeeEnds(svg), file).toEqual([]);
       }
       if (file === 'valve-types.mmd') {
         // PSV-1 is closed, as relief valves are in service: its lines stay solid.
@@ -462,6 +478,8 @@ describe('Mermaid v13 integration', () => {
         const { dots, off } = dotsOnJunctions(svg);
         expect(dots, file).toBeGreaterThan(0);
         expect(off, file).toEqual([]);
+        // …and the tee's lines start or end at the dot, so a line's colour changes there.
+        expect(staleTeeEnds(svg), file).toEqual([]);
       }
       if (file === 'valve-types.mmd') {
         // Three motors: MV-8, V3-9, and the M glyph is drawn as a path inside each circle.

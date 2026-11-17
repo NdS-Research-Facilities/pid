@@ -95,6 +95,9 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     const node = layout.nodes.get(eq.id);
     const found = junctions(paths);
     teeDots.set(eq.id, found.length || !node ? found : [{ x: node.x, y: node.y }]);
+    // With one junction, the tee's lines all start or end there, so each is drawn up to the dot
+    // and not along a stub to the tee's layout position (where colours would change instead).
+    if (found.length === 1) meetAt(routes.filter((r) => r.s.source === eq.id || r.s.target === eq.id), eq.id, found[0]!);
   }
   const hopped = hopPaths(
     routes.map((r) => r.d),
@@ -596,6 +599,44 @@ function drawCoils(w: SvgWriter, eq: Equipment, layout: PidLayout, paint: Paint,
 /** The wall a coil's inlet or outlet nozzle is on. */
 function coilSide(layout: PidLayout, eq: Equipment, i: number, end: 'in' | 'out'): 'left' | 'right' {
   return layout.coilSides.get(coilKey(eq.id, i, end)) ?? eq.coils?.[i]?.side ?? 'left';
+}
+
+/** Where `p` lies along `path`: the index of the segment it is on, or -1. */
+function along(path: readonly Point[], p: Point): number {
+  for (let k = 0; k + 1 < path.length; k++) if (toSegment(p, path[k]!, path[k + 1]!) < 1) return k;
+  return -1;
+}
+
+/**
+ * Redraws a tee's lines so they all meet at its junction `j`: a line that passes `j` on its way
+ * to the tee's layout position stops (or starts) at `j`; a line that leaves the tee's position
+ * away from `j` gets the stretch from `j` added, so that stretch is drawn once, as part of it.
+ */
+function meetAt(routes: { s: Stream; drawn: Point[]; d: PathData }[], tee: string, j: Point): void {
+  const copy = (p: Point): Point => ({ x: p.x, y: p.y });
+  // Each line oriented from the tee outwards.
+  const outward = routes.map((r) => (r.s.source === tee ? r.drawn.map(copy) : [...r.drawn].reverse().map(copy)));
+  // The stretch from the junction back to the tee's position, from a line that passes it.
+  let trunk: Point[] | undefined;
+  for (const out of outward) {
+    const k = along(out, j);
+    if (k >= 0) {
+      trunk = [copy(j), ...out.slice(0, k + 1).reverse()];
+      break;
+    }
+  }
+  if (!trunk) return;
+  routes.forEach((r, i) => {
+    const out = outward[i]!;
+    const k = along(out, j);
+    const next =
+      k >= 0
+        ? [copy(j), ...out.slice(k + 1)] // passes the junction: start there
+        : [...trunk!.map(copy), ...out.slice(1)]; // leaves away from it: add the stretch from it
+    const drawn = dedupe(next);
+    r.drawn = r.s.source === tee ? drawn : drawn.reverse();
+    r.d = polyline(r.drawn);
+  });
 }
 
 /**
