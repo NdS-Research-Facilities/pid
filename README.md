@@ -1,6 +1,6 @@
 # pid
 
-[![Marketplace (formerly known as HACS): custom repository](https://img.shields.io/badge/Marketplace%20(formerly%20known%20as%20HACS)-Custom-orange.svg)](https://hacs.xyz)
+[![Marketplace (formerly known as HACS): default](https://img.shields.io/badge/Marketplace%20(formerly%20known%20as%20HACS)-Default-41BDF5.svg)](https://hacs.xyz)
 [![CI](https://github.com/NdS-Research-Facilities/pid/actions/workflows/ci.yml/badge.svg)](https://github.com/NdS-Research-Facilities/pid/actions/workflows/ci.yml)
 [![Marketplace (formerly known as HACS) validation](https://github.com/NdS-Research-Facilities/pid/actions/workflows/marketplace.yml/badge.svg)](https://github.com/NdS-Research-Facilities/pid/actions/workflows/marketplace.yml)
 
@@ -367,17 +367,26 @@ package to `config/www/mdi.json` and set `icon_packs: { mdi: /local/mdi.json }`.
 
 ### Install
 
-**Manual:** run `pnpm build`, copy `packages/ha-card/dist/pid-card.js` to `config/www/`, and add
-`/local/pid-card.js` as a *JavaScript module* under Settings → Dashboards → Resources.
-
-**Marketplace (formerly known as HACS):**
+**Marketplace (formerly known as HACS):** open it in Home Assistant, search for **P&ID card**,
+download it, and reload the browser. Or open the card there directly:
 
 [![Open your Home Assistant instance and open this repository in the Marketplace (formerly known as HACS).](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=NdS-Research-Facilities&repository=pid&category=plugin)
 
-Or in the Marketplace (formerly known as HACS): ⋮ → *Custom repositories* → add `https://github.com/NdS-Research-Facilities/pid`
-with type *Dashboard*, then download *P&ID card (Mermaid v13)* and reload the browser. The
-Marketplace (formerly known as HACS) installs the `pid-card.js` attached to the latest GitHub
+The Marketplace (formerly known as HACS) installs the `pid-card.js` attached to the latest GitHub
 release; CI builds and attaches it when a `v*` tag is pushed.
+
+<details>
+<summary>Not listed in your Marketplace (formerly known as HACS) yet? Add it as a custom repository</summary>
+
+The card is in the default list of the Marketplace (formerly known as HACS); until your Home
+Assistant has picked up the latest list, add it by hand: ⋮ → *Custom repositories* → add
+`https://github.com/NdS-Research-Facilities/pid` with type *Dashboard*, then download
+*P&ID card (Mermaid v13)* and reload the browser.
+
+</details>
+
+**Manual:** run `pnpm build`, copy `packages/ha-card/dist/pid-card.js` to `config/www/`, and add
+`/local/pid-card.js` as a *JavaScript module* under Settings → Dashboards → Resources.
 
 The bundle is about 470 kB (180 kB gzipped): Mermaid v13's engine with only the `pid` diagram
 type and the icons plugin.
