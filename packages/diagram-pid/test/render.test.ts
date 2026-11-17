@@ -210,7 +210,7 @@ describe('all-capabilities example', () => {
     );
     expect(eq.some((e) => e.image) && eq.some((e) => e.icon) && eq.some((e) => e.classes) && eq.some((e) => e.style)).toBe(true);
     expect(model.streams.some((s) => s.lineNumber) && model.streams.some((s) => s.style) && model.linkStyleDefault).toBeTruthy();
-    expect(model.streams[13]).toMatchObject({ source: 'HP-1', target: 'E-101' });
+    expect(model.streams[13]).toMatchObject({ source: 'HP-1', target: 'E-101', name: 'heat', classes: ['heating'] });
     expect(eq.find((e) => e.id === 'AT-106')?.name).toBe('pH (outlet)');
     expect(eq.some((e) => e.gradient) && eq.some((e) => e.level)).toBe(true);
     expect(eq.some((e) => e.coils) && model.streams.some((s) => s.targetCoil !== undefined) && eq.some((e) => e.size)).toBe(true);
@@ -250,6 +250,61 @@ describe('solar and electrical', () => {
   it('shows a number on other equipment as written, not as a valve position', () => {
     const { model } = parsePid('pid\n  PV-1: pv = 3.4\n');
     expect(model.equipment[0]!.state?.kind).toBe('position');
+  });
+});
+
+describe('line classes', () => {
+  const src = `pid LR
+  classDef flow stroke:#ef6c00,stroke-width:2.5px
+  classDef back stroke:#5b8fd0
+  class f1,f2 flow
+  CV f1@--> T-1 f2@--> P-1 --> VV
+  VV r1@--> CV
+  V: valve = closed
+  CV b1@--> V
+  class r1 back
+  class b1 flow
+  style f2 stroke-dasharray:4 2
+  linkStyle r1 stroke-width:3px
+  pipe f1 22mm-CV-01
+  class P-1 flow
+`;
+
+  it('names lines with ID@ and applies class, style, linkStyle and pipe by name', () => {
+    const { model, diagnostics } = parsePid(src);
+    expect(diagnostics).toEqual([]);
+    const line = (name: string) => model.streams.find((s) => s.name === name)!;
+    expect(model.streams.map((s) => s.name ?? '-')).toEqual(['f1', 'f2', '-', 'r1', 'b1']);
+    expect(line('f1')).toMatchObject({ source: 'CV', target: 'T-1', classes: ['flow'], lineNumber: '22mm-CV-01' });
+    expect(line('f2')).toMatchObject({ classes: ['flow'], style: ['stroke-dasharray:4 2'] });
+    expect(line('r1')).toMatchObject({ classes: ['back'], style: ['stroke-width:3px'] });
+    // A class naming something that is not a line still goes to equipment.
+    expect(model.equipment.find((e) => e.id === 'P-1')?.classes).toEqual(['flow']);
+    expect(model.equipment.some((e) => ['f1', 'f2', 'r1', 'b1'].includes(e.id))).toBe(false);
+  });
+
+  it('reports duplicate names, names shared with equipment, and unknown names', () => {
+    const msgs = parsePid('pid\n  A x@--> B\n  B x@--> C\n  C A@--> D\n  linkStyle nope stroke:#f00\n').diagnostics.map((d) => d.message);
+    expect(msgs).toEqual([
+      expect.stringContaining('Two lines are named "x"'),
+      expect.stringContaining('"A" names both a line and a piece of equipment'),
+      expect.stringContaining('linkStyle nope: no line is named "nope"'),
+    ]);
+  });
+
+  it('draws a line in its class, its own style over the class, and blocking over both', async () => {
+    const mermaid = createMermaid();
+    await mermaid.registerExternalDiagrams([pid]);
+    const { svg } = await mermaid.render('lc', src);
+    const path = (id: string) => new RegExp(`data-id="edge-${id}"[^>]*>\\s*<path ([^>]*)>`).exec(svg)![1]!;
+    expect(svg).toMatch(/class="stream process class-flow" data-id="edge-s0"/);
+    expect(path('s0')).toContain('stroke="#ef6c00"');
+    expect(path('s0')).toContain('stroke-width="2.5px"');
+    expect(path('s1')).toContain('stroke-dasharray="4 2"'); // own style on top of the class
+    expect(path('s3')).toContain('stroke="#5b8fd0"');
+    expect(path('s3')).toContain('stroke-width="3px"'); // own linkStyle over the class
+    expect(path('s4')).toContain('stroke-opacity="0.55"'); // into a closed valve: still blocked
+    expect(path('s4')).toContain('stroke-dasharray="4 3"');
   });
 });
 

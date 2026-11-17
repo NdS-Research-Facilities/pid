@@ -64,6 +64,7 @@ option (actions, icon packs, image base, theme).
 | `A --- B` | Instrument connection to the process (thin line) |
 | `A -.-> B`, `A -.- B` | Signal line (dashed), with or without arrow |
 | `A ==> B`, `A === B` | Electrical power cable (orange), with or without arrow (direction of power) |
+| `A f1@--> B` | A named line (any line kind), for `class`, `style`, `linkStyle` and `pipe` |
 | `stream 1 { T: 25 °C, F: 1200 kg/h }` | Property table shown with stream `1` |
 | `%% comment` | Comment |
 
@@ -111,6 +112,28 @@ linkStyle default stroke-width:2px
 `linkStyle` works as in Mermaid: lines are numbered from 0 in the order they are written, and
 `default` applies to every line. A line the state shows as blocked stays dashed whatever its
 style.
+
+Lines can also be named and styled by class, as in Mermaid flowcharts:
+
+```
+classDef flow   stroke:#ef6c00,stroke-width:2.5px
+classDef return stroke:#5b8fd0
+CV f1@--> T-1 f2@--> P-1 f3@--> VV-Keuken    %% name a line with ID@
+VV-Keuken r1@--> T-2
+class f1,f2,f3 flow                          %% the same class as for equipment
+class r1 return
+style f2 stroke-dasharray:4 2                %% one line's own style
+linkStyle r1 stroke-width:3px                %% linkStyle and pipe take names too
+```
+
+A line takes `linkStyle default` first, then its classes, then its own `style` / `linkStyle`;
+blocking (a closed valve, an open breaker) still dashes it. Each class is also written as an SVG
+class, `class-<name>`. In the card a class name can come from a template, so a whole circuit
+changes with one line:
+
+```
+class f2,f3,r1 ${if(is_state('switch.keuken_cv_pomp_vv_lsc_plug_relay', 'on'), 'flow', 'off')}
+```
 
 ![Pump bypass with tees and pipe-mounted instruments](docs/images/junctions.png)
 

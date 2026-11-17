@@ -182,4 +182,23 @@ describe('pid-card', () => {
     await done;
     expect(b.svg()).toContain('href="/local/pid/assets/heat-pump.png"');
   });
+
+  it('switches a whole circuit with a class from a template', async () => {
+    const content = `pid LR
+  classDef flow stroke:#ef6c00
+  classDef off stroke:#9e9e9e
+  CV f1@--> P-1 f2@--> VV
+  class f1,f2 \${if(is_state('switch.pump', 'on'), 'flow', 'off')}
+`;
+    const { card, rendered } = mount({ content });
+    const stroke = (n: number) => card.shadowRoot!.querySelector(`[data-id="edge-s${n}"] path`)!.getAttribute('stroke');
+    let done = rendered();
+    card.hass = hass([entity('switch.pump', 'on')]);
+    await done;
+    expect([stroke(0), stroke(1)]).toEqual(['#ef6c00', '#ef6c00']);
+    done = rendered();
+    card.hass = hass([entity('switch.pump', 'off', {}, '2026-11-17T10:05:00Z')]);
+    await done;
+    expect([stroke(0), stroke(1)]).toEqual(['#9e9e9e', '#9e9e9e']);
+  });
 });

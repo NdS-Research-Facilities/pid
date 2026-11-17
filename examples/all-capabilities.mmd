@@ -71,7 +71,7 @@ pid LR
   J-1 --> FV-101 --> J-2
   J-1 --> V-02 --> J-2
   J-2 --> E-101 -->|3| J-3 --> R-101 -->|4| C-101
-  HP-1 --> E-101
+  HP-1 heat@--> E-101
   C-101 -->|5| V-201 --> K-101 -->|6| D-101
   D-101 --> J-4 --> V3-101.A
   V3-101.B --> D-3
@@ -139,8 +139,9 @@ pid LR
   pipe 2 3"-W-102-A1
   pipe J-1>V-02 2"-W-103-A1
   pipe 4 3"-P-104-B2
-  %% Lines count from 0 in written order: 13 is HP-1 --> E-101, 0-1 the raw water inlet
-  linkStyle 13 stroke:#c62828,stroke-width:2.5px
+  %% A named line (heat@-->) styled by a class; lines also count from 0 in written order
+  classDef heating stroke:#c62828,stroke-width:2.5px
+  class heat heating
   linkStyle 0,1 stroke:#1565c0
   linkStyle default stroke-linecap:round
 

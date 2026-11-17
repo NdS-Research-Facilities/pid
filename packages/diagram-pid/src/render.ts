@@ -108,10 +108,16 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
   routes.forEach(({ s, edge, pts, d }, i) => {
     const blocked = (s.kind === 'process' || s.kind === 'electric') && isBlocked(s, byId);
     // linkStyle: `default` first, then the line's own; Mermaid checks every declaration.
-    const decls = [...(model.linkStyleDefault ?? []), ...(s.style ?? [])];
+    // `linkStyle default`, then the line's classes, then its own `linkStyle` / `style`.
+    const decls = [
+      ...(model.linkStyleDefault ?? []),
+      ...(s.classes ?? []).flatMap((c) => model.classDefs.get(c) ?? []),
+      ...(s.style ?? []),
+    ];
     const { fill: _fill, stroke, ...lineStyle } = decls.length ? checkStyle(decls, (wn) => ctx.warn(wn)).shape : ({} as Attrs);
     const ink = (stroke as Paint['line'] | undefined) ?? (s.kind === 'electric' ? checkColor(CABLE)! : paint.line);
-    w.open('g', { class: `stream ${s.kind}${blocked ? ' stream-blocked' : ''}`, 'data-id': s.ast });
+    const lineClasses = (s.classes ?? []).map((c) => ` class-${c}`).join('');
+    w.open('g', { class: `stream ${s.kind}${blocked ? ' stream-blocked' : ''}${lineClasses}`, 'data-id': s.ast });
     w.leaf('path', {
       d: hopped[i] ?? d,
       fill: 'none',

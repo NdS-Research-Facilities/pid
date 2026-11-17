@@ -36,7 +36,7 @@ const ICON = /^icon\s+([A-Za-z][\w.-]*)\s+([a-z0-9-]+:[a-z0-9-]+)(?:\s+(\d+))?$/
 /** Default and largest size of a custom image or icon, px. */
 const IMAGE_SIZE = 48;
 const IMAGE_MAX = 240;
-const LINK_STYLE = /^linkStyle\s+(default|\d+(?:\s*,\s*\d+)*)\s+(.+)$/;
+const LINK_STYLE = /^linkStyle\s+(default|[\w-]+(?:\s*,\s*[\w-]+)*)\s+(.+)$/;
 /** `pipe <stream tag | A>B> <line number>`: the rest of the line is the number, quotes included. */
 const PIPE = /^pipe\s+(\S+)\s+(.+)$/;
 const GRADIENT = /^gradient\s+([A-Za-z][\w.-]*)\s+(.+)$/;
@@ -57,7 +57,8 @@ export const FILLABLE = new Set(['tank', 'vessel', 'drum', 'column', 'reactor', 
 const STREAM_PROPS = /^stream\s+("[^"]*"|[^\s{]+)\s*\{(.*)\}$/;
 const ID = /^[A-Za-z][\w.-]*$/;
 /** A line operator with an optional `|label|` straight after it. */
-const LINK = /\s*(-->|---|-\.->|-\.-|==>|===)(?:\|([^|]*)\|)?\s*/;
+/** A line operator, optionally named (`f1@-->`, as in Mermaid flowcharts), with an optional `|label|`. */
+const LINK = /(?:\s+([A-Za-z][\w-]*)@|\s*)(-->|---|-\.->|-\.-|==>|===)(?:\|([^|]*)\|)?\s*/;
 const LINK_KIND: Record<string, [LineKind, boolean]> = {
   '-->': ['process', true],
   '---': ['connection', false],
@@ -84,6 +85,8 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
   };
   const fills: { id: string; start: number; end: number }[] = [];
   const coilLines: { id: string; start: number; end: number }[] = [];
+  // `class` and `style` statements, in order: they can name lines written further down.
+  const styling: { id: string; cls?: string; decls?: string[]; start: number; end: number }[] = [];
   const actuatorLines: { id: string; start: number; end: number }[] = [];
   const diagnostics: Diagnostic[] = [];
   const children: AstNode[] = [];
@@ -179,11 +182,11 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
       for (const name of m[1]!.split(',')) model.classDefs.set(name.trim(), declarations(m[2]!));
       continue;
     } else if ((m = CLASS.exec(line))) {
-      for (const id of m[1]!.split(',')) (touch(id.trim(), start, end).classes ??= []).push(m[2]!);
+      // Resolved once every line is read: a named line takes it, anything else is equipment.
+      for (const id of m[1]!.split(',')) styling.push({ id: id.trim(), cls: m[2]!, start, end });
       continue;
     } else if ((m = STYLE.exec(line))) {
-      const eq = touch(m[1]!, start, end);
-      eq.style = [...(eq.style ?? []), ...declarations(m[2]!)];
+      styling.push({ id: m[1]!, decls: declarations(m[2]!), start, end });
       continue;
     } else if ((m = IMAGE.exec(line))) {
       const width = size(m[3], IMAGE_SIZE);
@@ -200,20 +203,22 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
     } else if ((m = STATE.exec(line))) {
       touch(m[1]!, start, end).state = parseState(decodeEntities(m[2]!));
     } else if (LINK.test(line)) {
-      // split with two capture groups: [id, op, label, id, op, label, id, ...]
+      // split with three capture groups: [id, name, op, label, id, name, op, label, id, ...]
       const parts = line.split(LINK);
-      const ids = parts.filter((_, i) => i % 3 === 0).map((s) => s.trim());
+      const ids = parts.filter((_, i) => i % 4 === 0).map((s) => s.trim());
       if (ids.some((id) => !ID.test(id))) {
         error('Expected tags around a line, e.g. "P-101 -->|2| E-101" or "TT-101 -.-> TIC-101"', start, end);
         continue;
       }
       for (let i = 0; i + 1 < ids.length; i++) {
-        const [kind, arrow] = LINK_KIND[parts[3 * i + 1]!]!;
-        const label = parts[3 * i + 2]?.trim() ? decodeEntities(parts[3 * i + 2]!.trim()) : undefined;
+        const name = parts[4 * i + 1];
+        const [kind, arrow] = LINK_KIND[parts[4 * i + 2]!]!;
+        const label = parts[4 * i + 3]?.trim() ? decodeEntities(parts[4 * i + 3]!.trim()) : undefined;
         const id = `s${model.streams.length}`;
+        if (name && model.streams.some((o) => o.name === name)) error(`Two lines are named "${name}"`, start, end);
         // Endpoints are resolved after every declaration is read: `V-1.C` is a port only when
         // `V-1` is a 3-way valve, declared before or after the stream.
-        model.streams.push({ id, kind, arrow, source: ids[i]!, target: ids[i + 1]!, label, ast: `edge-${id}` });
+        model.streams.push({ id, kind, arrow, source: ids[i]!, target: ids[i + 1]!, label, ...(name ? { name } : {}), ast: `edge-${id}` });
         children.push({ id: `edge-${id}`, type: 'stream', range: { start, end } });
         ranges.push({ start, end });
       }
@@ -286,23 +291,39 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
     if (!FILLABLE.has(eq.type))
       error(`${f.id} is a ${eq.type}: gradient and level work on ${[...FILLABLE].join(', ')}`, f.start, f.end);
   }
+  const named = new Map(model.streams.flatMap((s) => (s.name ? [[s.name, s] as const] : [])));
+  for (const [name] of named)
+    if (byId.has(name)) error(`"${name}" names both a line and a piece of equipment`, 0, 0);
+  for (const st of styling) {
+    const line = named.get(st.id);
+    if (line) {
+      if (st.cls) (line.classes ??= []).push(st.cls);
+      if (st.decls) line.style = [...(line.style ?? []), ...st.decls];
+      continue;
+    }
+    const eq = touch(st.id, st.start, st.end);
+    if (st.cls) (eq.classes ??= []).push(st.cls);
+    if (st.decls) eq.style = [...(eq.style ?? []), ...st.decls];
+  }
   for (const ls of linkStyles) {
     if (ls.refs === 'default') {
       model.linkStyleDefault = [...(model.linkStyleDefault ?? []), ...ls.decls];
       continue;
     }
-    for (const i of ls.refs.split(',').map(Number)) {
-      const s = model.streams[i];
+    for (const ref of ls.refs.split(',').map((r) => r.trim())) {
+      // A number counts lines from 0 in the order they are written; a name is a line's own.
+      const s = /^\d+$/.test(ref) ? model.streams[Number(ref)] : named.get(ref);
       if (s) s.style = [...(s.style ?? []), ...ls.decls];
-      else error(`linkStyle ${i}: there are ${model.streams.length} lines, numbered from 0`, ls.start, ls.end);
+      else if (/^\d+$/.test(ref)) error(`linkStyle ${ref}: there are ${model.streams.length} lines, numbered from 0`, ls.start, ls.end);
+      else error(`linkStyle ${ref}: no line is named "${ref}"`, ls.start, ls.end);
     }
   }
   for (const p of pipes) {
     const ends = /^(.+)>(.+)$/.exec(p.ref);
-    const matches = model.streams.filter((s) =>
-      ends ? s.source === ends[1] && s.target === ends[2] : s.label === p.ref,
-    );
-    if (!matches.length) error(`pipe ${p.ref}: no line with stream tag "${p.ref}" or ends "A>B"`, p.start, p.end);
+    const matches = named.has(p.ref)
+      ? [named.get(p.ref)!]
+      : model.streams.filter((s) => (ends ? s.source === ends[1] && s.target === ends[2] : s.label === p.ref));
+    if (!matches.length) error(`pipe ${p.ref}: no line named "${p.ref}", with stream tag "${p.ref}", or with ends "A>B"`, p.start, p.end);
     for (const s of matches) s.lineNumber = p.number;
   }
 

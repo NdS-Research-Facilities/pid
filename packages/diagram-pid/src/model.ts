@@ -151,8 +151,12 @@ export interface Stream {
   label?: string;
   /** `pipe 1 2"-CW-101-A1`: the line number written along the pipe. */
   lineNumber?: string;
-  /** `linkStyle 3 stroke:#c00`: style declarations as written. */
+  /** `linkStyle 3 stroke:#c00` / `style f1 …`: style declarations as written. */
   style?: string[];
+  /** `CV f1@--> T-1`: the line's own name, for `class`, `style`, `linkStyle` and `pipe`. */
+  name?: string;
+  /** `class f1,f2 flow`: classDef names applied in order, before the line's own style. */
+  classes?: string[];
   ast: string;
 }
 
