@@ -177,12 +177,7 @@ their size.
 
 ![A buffer tank with three coils](docs/images/coils.png)
 
-[`examples/coils.mmd`](examples/coils.mmd) has this example;
-[`examples/home-heating.mmd`](examples/home-heating.mmd) is a home heating system with a
-three-coil buffer, a solar collector, a motorised 3-way diverter, radiators, an electric
-element fed from PV, and domestic cold and hot water:
-
-![Home heating](docs/images/home-heating.png)
+[`examples/coils.mmd`](examples/coils.mmd) has this example.
 
 ### Solar and electrical
 
@@ -364,6 +359,17 @@ jsDelivr only when a diagram uses an `mdi:` icon. To serve it from Home Assistan
 `icons.json` from the [`@iconify-json/mdi`](https://www.npmjs.com/package/@iconify-json/mdi)
 package to `config/www/mdi.json` and set `icon_packs: { mdi: /local/mdi.json }`. Other packs
 (`fa6-solid`, `simple-icons`, …) are added the same way.
+
+### Example: home heating
+
+[`examples/home-heating.mmd`](examples/home-heating.mmd) is a real installation: the central
+heating (`CV`) feeds two underfloor heating circuits (*vloerverwarming*), kitchen and studio,
+each with its own pump, and the returns join before going back. The supply lines are orange,
+the returns blue (`linkStyle`). Its states are Home Assistant templates (the boiler burner and
+the two pump relays), so it is meant as the card's `content`; outside Home Assistant, as in this
+image, the templates show as written:
+
+![Home heating](docs/images/home-heating.png)
 
 ### Install
 

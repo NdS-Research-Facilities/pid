@@ -467,6 +467,12 @@ describe('Mermaid v13 integration', () => {
         // Three motors: MV-8, V3-9, and the M glyph is drawn as a path inside each circle.
         expect(svg.match(/data-id="node-(MV-8|V3-9)"/g)).toHaveLength(2);
       }
+      if (file === 'home-heating.mmd') {
+        // Two pumped circuits; supply and returns are pipes, none of them a power cable.
+        expect(svg).not.toContain('stream electric');
+        expect(svg.match(/class="stream process/g)).toHaveLength(8);
+        expect(svg.match(/class="tee-dot"/g)!.length).toBeGreaterThanOrEqual(2);
+      }
       if (file === 'coils.mmd') {
         expect(svg.match(/class="coil coil\d"/g)).toHaveLength(3);
         expect(svg).toContain('<title>Solar coil</title>');
