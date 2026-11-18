@@ -3,7 +3,7 @@ import type { Dir, LayoutEdge, LayoutModel, LayoutNode, Side } from '@mermaid-js
 import { layoutLabel, Style, type FontKey, type MeasuredLabel } from '@mermaid-js/core/text';
 import type { Equipment, NozzleSide, PidModel, Port, Stream } from './model.js';
 import { equipmentStateText, instrumentText } from './state.js';
-import { scaleOf, splitTag, symbolFor } from './symbols.js';
+import { coilShape, scaleOf, splitTag, symbolFor } from './symbols.js';
 
 export const LABEL_GAP = 6;
 export const ARROW = { length: 8, width: 7 };
@@ -122,6 +122,89 @@ const round1 = (n: number) => Math.round(n * 10) / 10;
 const size0 = (letters: string) => (letters.length <= 3 ? 11 : letters.length === 4 ? 9 : 8);
 
 const vertical = (d: Dir) => d === 'TB' || d === 'BT';
+
+/** How far a tee may slide to line up with a neighbour's fixed connection point. */
+const TEE_ALIGN = 24;
+/** Equipment whose lines meet it on its centre line. */
+const ON_CENTRE = new Set(['pump', 'compressor', 'exchanger', 'valve', 'valve3', 'instrument', 'inverter', 'breaker', 'meter', 'grid', 'consumer']);
+
+/**
+ * A tee has no body, so the layout puts it wherever suits it, often a few pixels off the fixed
+ * point a straight line from it must reach (a valve port, a pump's centre line, a coil or named
+ * nozzle). The line would then need a small step right at that point. Slides each such tee into
+ * line, with the straight runs through it, when it is only slightly off.
+ */
+function alignTees(
+  model: PidModel,
+  laid: LayoutModel,
+  placements: Map<string, NodePlacement>,
+  byId: ReadonlyMap<string, Equipment>,
+  coilSides: ReadonlyMap<string, 'left' | 'right'>,
+  coilInletLow: ReadonlySet<string>,
+): void {
+  /** Where line `s` meets `eq` at that end, on the axis across the line's run, if that is fixed. */
+  const fixedAt = (s: Stream, atSource: boolean, horizontal: boolean): number | undefined => {
+    const id = atSource ? s.source : s.target;
+    const eq = byId.get(id);
+    const node = laid.nodes.get(id);
+    const place = placements.get(id);
+    if (!eq || !node || !place) return undefined;
+    const pick = (p: { x: number; y: number }) => (horizontal ? p.y : p.x);
+    const nozzle = atSource ? s.sourceNozzle : s.targetNozzle;
+    if (nozzle) {
+      const p = nozzlePoints(eq, place, node).get(nozzle);
+      return p && pick(p.outer);
+    }
+    const coil = atSource ? s.sourceCoil : s.targetCoil;
+    if (coil !== undefined && eq.coils?.[coil]) {
+      const sideIn = coilSides.get(coilKey(id, coil, 'in')) ?? 'left';
+      const sideOut = coilSides.get(coilKey(id, coil, 'out')) ?? sideIn;
+      const shape = coilShape(eq.type, eq.coils[coil], sideIn, sideOut, coilInletLow.has(`${id}#${coil}`));
+      if (!shape) return undefined;
+      const local = atSource ? shape.outlet : shape.inlet;
+      return pick({ x: node.x - place.width / 2 + local.x * place.scale, y: node.y - place.height / 2 + local.y * place.scale });
+    }
+    if ((atSource ? s.sourcePort : s.targetPort) === 'C') return undefined;
+    return ON_CENTRE.has(eq.type) ? pick(node) : undefined;
+  };
+  for (const tee of model.equipment) {
+    if (tee.type !== 'tee') continue;
+    const node = laid.nodes.get(tee.id);
+    if (!node) continue;
+    let best: { horizontal: boolean; delta: number } | undefined;
+    for (const s of model.streams) {
+      const fromTee = s.source === tee.id;
+      if (!fromTee && s.target !== tee.id) continue;
+      const pts = laid.edges.get(s.id)?.points;
+      if (!pts || pts.length < 2) continue;
+      // Only a line that runs straight from the tee to the fixed point.
+      const horizontal = pts.every((p) => Math.abs(p.y - pts[0]!.y) < 0.5);
+      const straight = horizontal || pts.every((p) => Math.abs(p.x - pts[0]!.x) < 0.5);
+      if (!straight) continue;
+      const target = fixedAt(s, !fromTee, horizontal);
+      if (target === undefined) continue;
+      const delta = target - (horizontal ? node.y : node.x);
+      if (Math.abs(delta) > 0.5 && Math.abs(delta) <= TEE_ALIGN && (!best || Math.abs(delta) < Math.abs(best.delta)))
+        best = { horizontal, delta };
+    }
+    if (!best) continue;
+    const { horizontal, delta } = best;
+    const axis = horizontal ? 'y' : 'x';
+    const old = node[axis];
+    node[axis] = old + delta;
+    // Move the tee's end of each of its lines, and the straight run from it on that axis.
+    for (const s of model.streams) {
+      if (s.source !== tee.id && s.target !== tee.id) continue;
+      const pts = laid.edges.get(s.id)?.points;
+      if (!pts?.length) continue;
+      const order = s.source === tee.id ? pts : [...pts].reverse();
+      for (const p of order) {
+        if (Math.abs(p[axis] - old) >= 0.5) break;
+        p[axis] = old + delta;
+      }
+    }
+  }
+}
 
 /**
  * Labels go beside the symbol, never where streams come in: under it in a horizontal flow, to its
@@ -434,6 +517,7 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
     });
     laid = run();
   }
+  alignTees(model, laid, placements, byId, coilSides, coilInletLow);
   const markSize = Math.max(8, size - 4);
   const markFont: FontKey = { family, size: markSize, weight: 400 };
   const fillMarks: PidLayout['fillMarks'] = new Map();

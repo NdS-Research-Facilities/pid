@@ -465,6 +465,25 @@ function overlappingLines(svg: string): string[] {
   return found;
 }
 
+/** Small steps in lines: a short (< 15 px) turn between two parallel runs. There should be none. */
+function bumps(svg: string): string[] {
+  const found: string[] = [];
+  for (const m of svg.matchAll(/<g class="stream [^"]*" data-id="edge-(s\d+)"[^>]*>\s*<path d="([^"]+)"/g)) {
+    const p = [...m[2]!.matchAll(/[ML]\s*(-?[\d.]+)[ ,](-?[\d.]+)/g)].map((q) => ({ x: +q[1]!, y: +q[2]! }));
+    for (let k = 1; k + 2 < p.length; k++) {
+      const [a, b, c, d] = [p[k - 1]!, p[k]!, p[k + 1]!, p[k + 2]!];
+      const len = Math.hypot(c.x - b.x, c.y - b.y);
+      const flat = (u: typeof a, w: typeof a) => Math.abs(u.y - w.y) < 0.5;
+      const upright = (u: typeof a, w: typeof a) => Math.abs(u.x - w.x) < 0.5;
+      const bump =
+        (flat(a, b) && flat(c, d) && upright(b, c) && Math.abs(a.y - d.y) > 0.5) ||
+        (upright(a, b) && upright(c, d) && flat(b, c) && Math.abs(a.x - d.x) > 0.5);
+      if (len > 0.5 && len < 15 && bump) found.push(`${m[1]}:${Math.round(len)}px`);
+    }
+  }
+  return found;
+}
+
 /** Line ends at a tee's layout position where that tee's dot is elsewhere: there should be none. */
 function staleTeeEnds(svg: string): string[] {
   const tees = [...svg.matchAll(/class="equipment tee[^"]*" data-id="node-([^"]+)"[^>]*>\s*<g transform="translate\(([\d.]+),([\d.]+)\)"/g)].map(
@@ -627,8 +646,9 @@ describe('Mermaid v13 integration', () => {
         expect(svg.match(/class="stream signal"/g)).toHaveLength(2);
         expect(svg.match(/class="stream connection"/g)).toHaveLength(4);
       }
-      // No two different lines drawn on top of each other.
+      // No two different lines drawn on top of each other, and no small steps in any line.
       expect(overlappingLines(svg), file).toEqual([]);
+      expect(bumps(svg), file).toEqual([]);
       if (read(file).includes(': tee')) {
         // Tee dots mark where the lines actually join, never a straight run.
         const { dots, off } = dotsOnJunctions(svg);
@@ -644,8 +664,9 @@ describe('Mermaid v13 integration', () => {
         expect(psvLines.join('')).not.toContain('stream-blocked');
         expect(svg).toMatch(/class="equipment valve state-closed"/);
       }
-      // No two different lines drawn on top of each other.
+      // No two different lines drawn on top of each other, and no small steps in any line.
       expect(overlappingLines(svg), file).toEqual([]);
+      expect(bumps(svg), file).toEqual([]);
       if (read(file).includes(': tee')) {
         // Tee dots mark where the lines actually join, never a straight run.
         const { dots, off } = dotsOnJunctions(svg);

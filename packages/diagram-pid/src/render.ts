@@ -80,8 +80,16 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     const sides = endSides(model.direction, s, byId, mirrored, layout.coilSides);
     const fixedAt = (id: string, nozzle: string | undefined, coil: number | undefined, end: 'inlet' | 'outlet') =>
       nozzleAt(layout, byId.get(id), nozzle) ?? coilNozzle(layout, byId.get(id), coil, end);
-    attach(pts, false, layout, byId.get(s.source), sides.source, fixedAt(s.source, s.sourceNozzle, s.sourceCoil, 'outlet'), portDepth(layout, s.source, s.sourcePort), slots.get(`${s.id}:source`));
-    attach(pts, true, layout, byId.get(s.target), sides.target, fixedAt(s.target, s.targetNozzle, s.targetCoil, 'inlet'), portDepth(layout, s.target, s.targetPort), slots.get(`${s.id}:target`));
+    const srcFixed = fixedAt(s.source, s.sourceNozzle, s.sourceCoil, 'outlet');
+    const tgtFixed = fixedAt(s.target, s.targetNozzle, s.targetCoil, 'inlet');
+    // An end is free when nothing pins where the line meets it: then a straight line can move to
+    // suit the other end, rather than step.
+    const free = (id: string, fixed: Point | undefined, side: Side | undefined, slot: number | undefined) =>
+      !fixed && !side && slot === undefined && byId.get(id)?.type !== 'tee' ? byId.get(id) : undefined;
+    const srcSlot = slots.get(`${s.id}:source`);
+    const tgtSlot = slots.get(`${s.id}:target`);
+    attach(pts, false, layout, byId.get(s.source), sides.source, srcFixed, portDepth(layout, s.source, s.sourcePort), srcSlot, free(s.target, tgtFixed, sides.target, tgtSlot));
+    attach(pts, true, layout, byId.get(s.target), sides.target, tgtFixed, portDepth(layout, s.target, s.targetPort), tgtSlot, free(s.source, srcFixed, sides.source, srcSlot));
     const others = [...layout.nodes].filter(([id]) => id !== s.source && id !== s.target).map(([, n]) => n);
     if (byId.get(s.source)?.type === 'tee') bendAtTee(pts, false, others);
     if (byId.get(s.target)?.type === 'tee') bendAtTee(pts, true, others);
@@ -778,6 +786,27 @@ function separateOverlaps(routes: { s: Stream; drawn: Point[]; d: PathData }[], 
   for (const r of routes) r.d = polyline(r.drawn);
 }
 
+/** Can `eq` take a line meeting it at `v` (across the line's way in), as `attach` would place it? */
+function canTake(layout: PidLayout, eq: Equipment, across: boolean, v: number): boolean {
+  const node = layout.nodes.get(eq.id);
+  const place = layout.placements.get(eq.id);
+  if (!node || !place) return false;
+  const symV = (across ? place.height : place.width) / 2;
+  const radius = symbolFor(eq).round;
+  const round = radius === undefined ? undefined : radius * place.scale;
+  const reach =
+    round !== undefined
+      ? round * 0.6
+      : eq.image || eq.icon
+        ? symV * 0.6
+        : eq.type === 'instrument'
+          ? symV / 2
+          : CENTRED.has(eq.type)
+            ? 0
+            : Math.max(0, symV - CORNER);
+  return Math.abs(v - (across ? node.y : node.x)) <= reach + 0.5;
+}
+
 /** How far from its centre along a side a symbol can take lines, keeping clear of its corners. */
 function sideLimit(eq: Equipment, place: NodePlacement, across: boolean): number {
   const radius = symbolFor(eq).round;
@@ -786,11 +815,13 @@ function sideLimit(eq: Equipment, place: NodePlacement, across: boolean): number
   const reach =
     round !== undefined
       ? round * 0.6
-      : eq.type === 'instrument'
-        ? symV / 2
-        : CENTRED.has(eq.type)
-          ? 0
-          : Math.max(0, symV - CORNER);
+      : eq.image || eq.icon
+        ? symV * 0.6
+        : eq.type === 'instrument'
+          ? symV / 2
+          : CENTRED.has(eq.type)
+            ? 0
+            : Math.max(0, symV - CORNER);
   const limit = Math.max(reach, symV - Math.min(CORNER / 2, symV / 3));
   // On a round symbol the end must stay on the circle.
   return round !== undefined ? Math.min(limit, round - 2) : limit;
@@ -880,6 +911,8 @@ function attach(
   depthAt?: number,
   /** Where along the symbol's side this line meets it, when several share that side. */
   slot?: number,
+  /** The line's other end, when nothing pins where the line meets it. */
+  otherFree?: Equipment,
 ): void {
   const node = eq && layout.nodes.get(eq.id);
   const place = eq && layout.placements.get(eq.id);
@@ -899,21 +932,34 @@ function attach(
   const radius = symbolFor(eq).round;
   const round = side || radius === undefined ? undefined : radius * place.scale;
   const squareInstrument = eq.type === 'instrument' && !round;
-  const reach = round ? round * 0.6 : side ? 0 : squareInstrument ? symV / 2 : CENTRED.has(eq.type) ? 0 : Math.max(0, symV - CORNER);
+  // An image or icon has no corners to keep clear of: lines can meet most of its side.
+  const picture = !!(eq.image || eq.icon);
+  const reach = round ? round * 0.6 : side ? 0 : picture ? symV * 0.6 : squareInstrument ? symV / 2 : CENTRED.has(eq.type) ? 0 : Math.max(0, symV - CORNER);
   const v = fixed ? V(fixed) : (slot ?? Math.min(V(node) + reach, Math.max(V(node) - reach, V(E))));
   // Lines run into a tee's centre; a round symbol is met on its circle; anything else on its box.
   const depth = depthAt ?? (eq.type === 'tee' ? 0 : round ? Math.sqrt(round * round - (v - V(node)) ** 2) : symU);
   const end = fixed ?? at(U(node) + sign * depth, v);
   let tail: Point[];
-  const Q = pts.length >= 3 ? pts[atEnd ? i - 2 : 2] : undefined;
-  if (Math.abs(V(E) - v) < 0.5 && Math.abs(V(P) - v) < 0.5) tail = [end];
-  else if (Q && Math.abs(V(P) - V(E)) < 0.5 && Math.abs(U(Q) - U(P)) < 0.5) {
-    // The run in is straight and the bend before it turns across: move that bend to line the
-    // run up with the symbol, instead of adding a jog at the end.
-    pts[atEnd ? i - 1 : 1] = at(U(P), v);
+  // The straight run in: from this end over every point in line with it (the layout keeps extra
+  // points along a run, at labels), up to the bend after it, if there is one.
+  const step = atEnd ? -1 : 1;
+  let k = i;
+  while (pts[k + step] && Math.abs(V(pts[k + step]!) - V(E)) < 0.5) k += step;
+  const bend = pts[k + step];
+  const moveRun = (from: number, to: number) => {
+    for (let q = from; q !== to + step; q += step) pts[q] = at(U(pts[q]!), v);
+  };
+  if (Math.abs(V(E) - v) < 0.5) tail = [end];
+  else if (k !== i && bend && Math.abs(U(bend) - U(pts[k]!)) < 0.5) {
+    // The run turns across further on: move the run to line up with the symbol, so the turn
+    // takes up the difference instead of a step at the end.
+    moveRun(i + step, k);
     tail = [end];
-  }
-  else {
+  } else if (k !== i && !bend && otherFree && canTake(layout, otherFree, across, v)) {
+    // A straight line whose other end can meet it anywhere near: move the whole line.
+    moveRun(i + step, k);
+    tail = [end];
+  } else {
     const stub = at(U(node) + sign * (boxU + STUB), v);
     tail = [at(U(stub), V(P)), stub, end];
   }
