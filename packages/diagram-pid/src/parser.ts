@@ -32,7 +32,9 @@ const STATE = /^([A-Za-z][\w.-]*)\s*=(?![=>])\s*(.*)$/;
 const CLASSDEF = /^classDef\s+([\w-]+(?:\s*,\s*[\w-]+)*)\s+(.+)$/;
 // The class may be anything here: an unfilled template (`${if(…)}` outside Home Assistant) is
 // ignored rather than an error, as linkStyle drops values it cannot use.
-const CLASS = /^class\s+([A-Za-z][\w.-]*(?:\s*,\s*[A-Za-z][\w.-]*)*)\s+(.+)$/;
+// No class at all is ignored too: a template choosing between a class and nothing
+// (`${if(…, 'off', '')}`) leaves `class k1` behind.
+const CLASS = /^class\s+([A-Za-z][\w.-]*(?:\s*,\s*[A-Za-z][\w.-]*)*)(?:\s+(.*))?$/;
 const CLASS_NAME = /^[\w-]+$/;
 const STYLE = /^style\s+([A-Za-z][\w.-]*)\s+(.+)$/;
 const IMAGE = /^image\s+([A-Za-z][\w.-]*)\s+(\S+)(?:\s+(\d+)(?:x(\d+))?)?$/;
@@ -200,7 +202,7 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
       continue;
     } else if ((m = CLASS.exec(line))) {
       // Resolved once every line is read: a named line takes it, anything else is equipment.
-      const cls = m[2]!.trim();
+      const cls = (m[2] ?? '').trim();
       if (CLASS_NAME.test(cls)) for (const id of m[1]!.split(',')) styling.push({ id: id.trim(), cls, start, end });
       continue;
     } else if ((m = STYLE.exec(line))) {

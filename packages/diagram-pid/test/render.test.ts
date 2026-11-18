@@ -393,6 +393,12 @@ describe('line classes', () => {
     expect(model.equipment.some((e) => ['f1', 'f2', 'r1', 'b1'].includes(e.id))).toBe(false);
   });
 
+  it('ignores a class line with no class, as a template choosing nothing leaves it', () => {
+    const { model, diagnostics } = parsePid('pid\n  classDef warm stroke:#ef6c00\n  A k1@--> B\n  class k1 warm\n  class k1\n  class k1   \n');
+    expect(diagnostics).toEqual([]);
+    expect(model.streams[0]!.classes).toEqual(['warm']);
+  });
+
   it('ignores a class that is an unfilled template, keeping the classes before it', () => {
     const { model, diagnostics } = parsePid(
       "pid\n  classDef warm stroke:#ef6c00\n  A k1@--> B\n  class k1 warm\n  class k1 ${if(is_state('switch.p', 'on'), 'hot', 'off')}\n",
