@@ -15,6 +15,7 @@ import {
   type PidModel,
   type Port,
   type GradientStop,
+  type NozzleSide,
   type Level,
   type StreamProperty,
   type ValveKind,
@@ -46,8 +47,13 @@ const GRADIENT = /^gradient\s+([A-Za-z][\w.-]*)\s+(.+)$/;
 const GRADIENT_RANGE = /^gradient-range(?:\s+([A-Za-z][\w.-]*))?\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$/;
 const GRADIENT_MARKS = /^gradient-marks\s+(on|off)$/;
 const ACTUATOR = /^actuator\s+([A-Za-z][\w.-]*)\s+(motor|diaphragm)$/;
+/** `nozzle TAG id left|right|top|bottom ["Description"]` */
+const NOZZLE = /^nozzle\s+([A-Za-z][\w.-]*)\s+([A-Za-z][\w-]*)\s+(left|right|top|bottom)(?:\s+"([^"]*)")?$/;
+/** Equipment that has its own connection points, so takes no nozzles. */
+const NO_NOZZLES = new Set(['tee', 'valve', 'valve3']);
 const SIZE = /^size\s+([A-Za-z][\w.-]*)\s+(\d+(?:\.\d+)?)$/;
-const COIL = /^coil\s+([A-Za-z][\w.-]*)\s+(top|middle|bottom|@\s*\d+(?:\.\d+)?\s*%)(?:\s+(left|right))?(?:\s+"([^"]*)")?$/;
+/** `coil TAG top|middle|bottom|@NN% [inlet wall [outlet wall]] ["Name"]` */
+const COIL = /^coil\s+([A-Za-z][\w.-]*)\s+(top|middle|bottom|@\s*\d+(?:\.\d+)?\s*%)(?:\s+(left|right))?(?:\s+(left|right))?(?:\s+"([^"]*)")?$/;
 const COIL_AT: Record<string, number> = { top: 0.8, middle: 0.5, bottom: 0.2 };
 /** Equipment a coil can go in. */
 export const COILABLE = new Set(['tank', 'vessel', 'drum', 'column', 'reactor']);
@@ -91,6 +97,7 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
   // `class` and `style` statements, in order: they can name lines written further down.
   const styling: { id: string; cls?: string; decls?: string[]; start: number; end: number }[] = [];
   const actuatorLines: { id: string; start: number; end: number }[] = [];
+  const nozzleLines: { id: string; start: number; end: number }[] = [];
   const diagnostics: Diagnostic[] = [];
   const children: AstNode[] = [];
   const byId = new Map<string, Equipment>();
@@ -155,6 +162,12 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
       eq.actuated = true;
       actuatorLines.push({ id: m[1]!, start, end });
       continue;
+    } else if ((m = NOZZLE.exec(line))) {
+      const eq = touch(m[1]!, start, end);
+      if ((eq.nozzles ?? []).some((n) => n.id === m![2])) error(`${m[1]} already has a nozzle "${m[2]}"`, start, end);
+      else (eq.nozzles ??= []).push({ id: m[2]!, side: m[3] as NozzleSide, ...(m[4] !== undefined ? { label: decodeEntities(m[4]) } : {}) });
+      nozzleLines.push({ id: m[1]!, start, end });
+      continue;
     } else if ((m = SIZE.exec(line))) {
       const f = Number(m[2]);
       if (f < 0.5 || f > 3) error(`size ${m[1]} ${m[2]}: use a factor from 0.5 to 3`, start, end);
@@ -167,7 +180,8 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
       (eq.coils ??= []).push({
         height,
         ...(m[3] ? { side: m[3] as 'left' | 'right' } : {}),
-        ...(m[4] !== undefined ? { name: decodeEntities(m[4]) } : {}),
+        ...(m[4] ? { sideOut: m[4] as 'left' | 'right' } : {}),
+        ...(m[5] !== undefined ? { name: decodeEntities(m[5]) } : {}),
       });
       coilLines.push({ id: m[1]!, start, end });
       continue;
@@ -258,9 +272,15 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
 
   model.streams.forEach((s, i) => {
     const { start, end } = ranges[i]!;
-    const resolve = (ref: string): [string, Port | undefined, number | undefined] => {
+    const resolve = (ref: string): [string, Port | undefined, number | undefined, string?] => {
       const m = /^(.+)\.([ABC])$/.exec(ref);
       if (m && byId.get(m[1]!)?.type === 'valve3') return [m[1]!, m[2] as Port, undefined];
+      const n = /^(.+)\.([A-Za-z][\w-]*)$/.exec(ref);
+      if (n && byId.get(n[1]!)?.nozzles && !/^coil\d+$/.test(n[2]!)) {
+        if (byId.get(n[1]!)!.nozzles!.some((z) => z.id === n[2])) return [n[1]!, undefined, undefined, n[2]!];
+        error(`${n[1]} has no nozzle "${n[2]}"`, start, end);
+        return [n[1]!, undefined, undefined];
+      }
       const c = /^(.+)\.coil(\d+)$/.exec(ref);
       if (c && byId.get(c[1]!)?.coils) {
         const n = Number(c[2]);
@@ -272,15 +292,22 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
       return [touch(ref, start, end).id, undefined, undefined];
     };
     let coil: number | undefined;
-    [s.source, s.sourcePort, coil] = resolve(s.source);
+    let nozzle: string | undefined;
+    [s.source, s.sourcePort, coil, nozzle] = resolve(s.source);
     if (coil !== undefined) s.sourceCoil = coil;
-    [s.target, s.targetPort, coil] = resolve(s.target);
+    if (nozzle !== undefined) s.sourceNozzle = nozzle;
+    [s.target, s.targetPort, coil, nozzle] = resolve(s.target);
     if (coil !== undefined) s.targetCoil = coil;
+    if (nozzle !== undefined) s.targetNozzle = nozzle;
     const target = byId.get(s.target);
     const drivable = target?.type === 'valve3' || (target?.type === 'valve' && target.valveKind !== 'relief');
     if (s.kind === 'signal' && drivable) target!.actuated = true;
   });
 
+  for (const z of nozzleLines) {
+    const eq = byId.get(z.id)!;
+    if (NO_NOZZLES.has(eq.type)) error(`${z.id} is a ${eq.type}: it has its own connection points, so takes no nozzles`, z.start, z.end);
+  }
   for (const a of actuatorLines) {
     const eq = byId.get(a.id)!;
     const ok = eq.type === 'valve3' || (eq.type === 'valve' && eq.valveKind !== 'relief');

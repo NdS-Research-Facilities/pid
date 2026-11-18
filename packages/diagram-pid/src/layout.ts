@@ -1,7 +1,7 @@
 import type { RenderContext } from '@mermaid-js/core';
 import type { Dir, LayoutEdge, LayoutModel, LayoutNode, Side } from '@mermaid-js/core/layout';
 import { layoutLabel, Style, type FontKey, type MeasuredLabel } from '@mermaid-js/core/text';
-import type { Equipment, PidModel, Port, Stream } from './model.js';
+import type { Equipment, NozzleSide, PidModel, Port, Stream } from './model.js';
 import { equipmentStateText, instrumentText } from './state.js';
 import { scaleOf, splitTag, symbolFor } from './symbols.js';
 
@@ -47,6 +47,51 @@ export interface NodePlacement {
    * faces the side its line goes to: up instead of down, right instead of left.
    */
   mirror?: boolean;
+  /** Room beyond the symbol for nozzle stubs and descriptions, either side, across and down. */
+  margin: { x: number; y: number };
+  /** Nozzle descriptions, measured, by nozzle id. */
+  nozzleLabels: Map<string, MeasuredLabel>;
+  /** An image or icon drawn inside a larger outline, to carry its nozzles. */
+  framed?: boolean;
+}
+
+/** Length of a nozzle's stub, and the least room per nozzle along a side. */
+export const NOZZLE_STUB = 8;
+export const NOZZLE_PITCH = 18;
+
+export interface NozzlePoint {
+  /** On the symbol's edge, where the stub starts. */
+  edge: { x: number; y: number };
+  /** The stub's outer end, where the line starts or ends. */
+  outer: { x: number; y: number };
+  side: NozzleSide;
+}
+
+/**
+ * Where each nozzle of `eq` is: nozzles on one side spread evenly along it, in the order written
+ * (top to bottom on the left and right, left to right on the top and bottom). On a round symbol
+ * the stub starts on the circle.
+ */
+export function nozzlePoints(eq: Equipment, place: NodePlacement, node: { x: number; y: number }): Map<string, NozzlePoint> {
+  const out = new Map<string, NozzlePoint>();
+  const radius = place.framed ? undefined : symbolFor(eq).round;
+  const round = radius === undefined ? undefined : radius * place.scale;
+  for (const side of ['left', 'right', 'top', 'bottom'] as const) {
+    const list = (eq.nozzles ?? []).filter((z) => z.side === side);
+    const across = side === 'left' || side === 'right';
+    const length = across ? place.height : place.width;
+    const pitch = length / (list.length + 1);
+    const sign = side === 'right' || side === 'bottom' ? 1 : -1;
+    list.forEach((z, k) => {
+      const offset = -length / 2 + pitch * (k + 1);
+      const reach = (across ? place.width : place.height) / 2;
+      const depth = round !== undefined && Math.abs(offset) < round ? Math.sqrt(round * round - offset * offset) : reach;
+      const edge = across ? { x: node.x + sign * depth, y: node.y + offset } : { x: node.x + offset, y: node.y + sign * depth };
+      const outer = across ? { x: node.x + sign * (reach + NOZZLE_STUB), y: edge.y } : { x: edge.x, y: node.y + sign * (reach + NOZZLE_STUB) };
+      out.set(z.id, { edge, outer, side });
+    });
+  }
+  return out;
 }
 
 export interface EdgeLabel {
@@ -66,6 +111,8 @@ export interface PidLayout extends LayoutModel {
   markSize: number;
   /** The wall each coil's nozzles are on, by `coilKey`. */
   coilSides: Map<string, 'left' | 'right'>;
+  /** Coils (`TAG#index`) with both nozzles on one wall whose inlet is the lower one. */
+  coilInletLow: Set<string>;
   fontSize: number;
 }
 
@@ -114,6 +161,14 @@ export function endSides(
 ): { source?: Side; target?: Side } {
   const from = byId.get(s.source);
   const to = byId.get(s.target);
+  // A nozzle decides its line's side.
+  const nozzleSide = (id: string, n: string | undefined) => (n ? byId.get(id)?.nozzles?.find((z) => z.id === n)?.side : undefined);
+  const srcNozzle = nozzleSide(s.source, s.sourceNozzle);
+  const tgtNozzle = nozzleSide(s.target, s.targetNozzle);
+  if (srcNozzle || tgtNozzle) {
+    const rest = endSides(dir, { ...s, sourceNozzle: undefined, targetNozzle: undefined }, byId, mirrored, coilSides);
+    return { source: srcNozzle ?? rest.source, target: tgtNozzle ?? rest.target };
+  }
   const coil = (id: string, i: number | undefined, end: 'in' | 'out') =>
     i === undefined ? undefined : (coilSides.get(coilKey(id, i, end)) ?? byId.get(id)?.coils?.[i]?.side);
   // A line leaves a coil by its outlet and reaches it by its inlet.
@@ -201,7 +256,7 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
     const tee = eq.type === 'tee';
     if (tee) {
       // A tee is a point on the pipe: no labels, and a box no larger than its dot.
-      placements.set(eq.id, { labels: { width: 0, height: 0 }, side: 'below', width: sym.width, height: sym.height, turn: 0, scale: 1 });
+      placements.set(eq.id, { labels: { width: 0, height: 0 }, side: 'below', width: sym.width, height: sym.height, turn: 0, scale: 1, margin: { x: 0, y: 0 }, nozzleLabels: new Map() });
       return { id: eq.id, width: sym.width, height: sym.height, shape: eq.type };
     }
     const tag = inBubble ? undefined : measure(eq.id, font, Style.Bold);
@@ -227,18 +282,40 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
       height: lines.reduce((h, l) => h + l.height, 0),
     };
     const turn = !sym.turns || !vertical(model.direction) ? 0 : model.direction === 'TB' ? 90 : -90;
-    const f = scaleOf(eq);
-    const w = (turn ? sym.height : sym.width) * f;
-    const h = (turn ? sym.width : sym.height) * f;
+    let f = scaleOf(eq);
+    let w = (turn ? sym.height : sym.width) * f;
+    let h = (turn ? sym.width : sym.height) * f;
+    // Nozzles need room along their side: a symbol grows to give each its pitch; an image or icon
+    // keeps its size and is drawn inside a larger outline instead.
+    const nozzles = eq.nozzles ?? [];
+    const count = (sides: string[]) => Math.max(0, ...sides.map((sd) => nozzles.filter((z) => z.side === sd).length));
+    const needH = (count(['left', 'right']) + 1) * NOZZLE_PITCH;
+    const needW = (count(['top', 'bottom']) + 1) * NOZZLE_PITCH;
+    const framed = nozzles.length > 0 && !!(eq.image || eq.icon);
+    if (nozzles.length && !framed) {
+      const g = Math.max(1, nozzles.some((z) => z.side === 'left' || z.side === 'right') ? needH / h : 1, nozzles.some((z) => z.side === 'top' || z.side === 'bottom') ? needW / w : 1);
+      [f, w, h] = [f * g, w * g, h * g];
+    } else if (framed) {
+      w = Math.max(w + 12, needW);
+      h = Math.max(h + 12, needH);
+    }
+    // Room beyond the symbol for each nozzle's stub and its description, mirrored either side.
+    const nozzleLabels = new Map<string, MeasuredLabel>();
+    for (const z of nozzles) if (z.label) nozzleLabels.set(z.id, measure(z.label, { ...small, size: size - 3 }));
+    const room = (sides: string[]) =>
+      Math.max(0, ...nozzles.filter((z) => sides.includes(z.side)).map((z) => NOZZLE_STUB + (nozzleLabels.get(z.id)?.width ?? 0) + 4));
+    const margin = { x: room(['left', 'right']), y: room(['top', 'bottom']) };
     const side = labelSide(model.direction, eq);
-    placements.set(eq.id, { labels, side, width: w, height: h, turn, scale: f });
+    placements.set(eq.id, { labels, side, width: w, height: h, turn, scale: f, margin, nozzleLabels, ...(framed ? { framed } : {}) });
     // The symbol sits in the middle of the box, so streams attach at its centre line; the space
     // the labels take on one side is mirrored on the other.
     const across = side === 'left' || side === 'right';
+    const W = w + 2 * margin.x;
+    const H = h + 2 * margin.y;
     return {
       id: eq.id,
-      width: Math.ceil(across ? w + 2 * (LABEL_GAP + labels.width) : Math.max(w, labels.width) + BOX_PAD),
-      height: Math.ceil(across ? Math.max(h, labels.height) + BOX_PAD : h + 2 * (LABEL_GAP + labels.height)),
+      width: Math.ceil(across ? W + 2 * (LABEL_GAP + labels.width) : Math.max(W, labels.width) + BOX_PAD),
+      height: Math.ceil(across ? Math.max(H, labels.height) + BOX_PAD : H + 2 * (LABEL_GAP + labels.height)),
       shape: eq.type,
     };
   });
@@ -303,16 +380,21 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
     if (pull * sign < 0) mirrored.add(eq.id);
   }
   // Each coil nozzle goes on the wall facing the line it carries (inlet: the line coming in,
-  // outlet: the line going out), unless the diagram names the wall for the whole coil.
+  // outlet: the line going out), unless the diagram names the walls. With both on one wall, the
+  // inlet takes the upper or lower nozzle, whichever its line comes from, so the two don't cross.
   const coilSides = new Map<string, 'left' | 'right'>();
+  const coilInletLow = new Set<string>();
   for (const eq of model.equipment) {
     const node = laid.nodes.get(eq.id);
     eq.coils?.forEach((coil, i) => {
-      if (coil.side) {
-        coilSides.set(coilKey(eq.id, i, 'in'), coil.side);
-        coilSides.set(coilKey(eq.id, i, 'out'), coil.side);
-        return;
-      }
+      const otherY = (end: 'in' | 'out') => {
+        const ys = model.streams.flatMap((s) => {
+          if (end === 'out' && s.source === eq.id && s.sourceCoil === i) return [laid.nodes.get(s.target)?.y ?? NaN];
+          if (end === 'in' && s.target === eq.id && s.targetCoil === i) return [laid.nodes.get(s.source)?.y ?? NaN];
+          return [];
+        }).filter((y) => !Number.isNaN(y));
+        return ys.length ? ys.reduce((a, b) => a + b, 0) / ys.length : undefined;
+      };
       const sideOf = (end: 'in' | 'out') => {
         const ends = model.streams.flatMap((s) => {
           const pts = laid.edges.get(s.id)?.points;
@@ -324,11 +406,19 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
         if (!node || !ends.length) return undefined;
         return ends.reduce((sum, p) => sum + p.x - node.x, 0) / ends.length > 0 ? ('right' as const) : ('left' as const);
       };
-      const inlet = sideOf('in');
-      const outlet = sideOf('out');
-      // A nozzle without a line goes on the other one's wall.
-      coilSides.set(coilKey(eq.id, i, 'in'), inlet ?? outlet ?? 'left');
-      coilSides.set(coilKey(eq.id, i, 'out'), outlet ?? inlet ?? 'left');
+      // Named walls win; a nozzle without a line goes on the other one's wall.
+      const autoIn = sideOf('in');
+      const autoOut = sideOf('out');
+      const inlet = coil.side ?? autoIn ?? autoOut ?? 'left';
+      const outlet = coil.sideOut ?? coil.side ?? autoOut ?? inlet;
+      coilSides.set(coilKey(eq.id, i, 'in'), inlet);
+      coilSides.set(coilKey(eq.id, i, 'out'), outlet);
+      if (inlet === outlet && node) {
+        const yIn = otherY('in');
+        const yOut = otherY('out');
+        const low = yIn !== undefined && yOut !== undefined ? yIn > yOut : yIn !== undefined ? yIn > node.y : yOut !== undefined && yOut < node.y;
+        if (low) coilInletLow.add(`${eq.id}#${i}`);
+      }
     });
   }
   const coilLines = model.streams.some((s) => s.sourceCoil !== undefined || s.targetCoil !== undefined);
@@ -355,5 +445,5 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
         level: eq.level ? measure(eq.level.percent === undefined ? '?' : `${round1(eq.level.percent)} %`, markFont) : undefined,
       });
     }
-  return { ...laid, placements, edgeLabels, lineNumbers, fillMarks, markSize, coilSides, fontSize: size };
+  return { ...laid, placements, edgeLabels, lineNumbers, fillMarks, markSize, coilSides, coilInletLow, fontSize: size };
 }

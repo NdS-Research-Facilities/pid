@@ -65,6 +65,7 @@ option (actions, icon packs, image base, theme).
 | `A -.-> B`, `A -.- B` | Signal line (dashed), with or without arrow |
 | `A ==> B`, `A === B` | Electrical power cable (orange), with or without arrow (direction of power) |
 | `A f1@--> B` | A named line (any line kind), for `class`, `style`, `linkStyle` and `pipe` |
+| `nozzle TAG id side "Text"`, `TAG.id` | A named connection point on equipment, and a line to it |
 | `stream 1 { T: 25 °C, F: 1200 kg/h }` | Property table shown with stream `1` |
 | `%% comment` | Comment |
 
@@ -185,6 +186,7 @@ T-1: tank "Buffer"
 coil T-1 bottom "Solar coil"            %% top | middle | bottom | @NN% (height from the bottom)
 coil T-1 middle "Heat pump coil"
 coil T-1 top right "Hot water coil"     %% left | right: both nozzles on that wall
+coil T-1 @30% left right                %% inlet wall, then outlet wall: straight through
 P-1 --> T-1.coil1                       %% into coil 1's inlet
 T-1.coil1 --> R-1                       %% out of its outlet
 PV-1 ==> T-1.coil3                      %% a cable: an electric heating element
@@ -192,8 +194,10 @@ PV-1 ==> T-1.coil3                      %% a cable: an electric heating element
 
 - Coils are numbered in the order they are written: `coil1`, `coil2`, …; the name shows as a
   tooltip.
-- Each nozzle goes on the wall facing its line. With the inlet and outlet on opposite walls the
-  coil runs straight through; on one wall (or with `left`/`right`) it turns back.
+- Each nozzle goes on the wall facing its line, unless you name the walls: one word for both, or
+  the inlet's then the outlet's. On opposite walls the coil runs straight through; on one wall it
+  turns back, and the inlet takes the upper or lower nozzle, whichever its line comes from, so
+  the two lines don't cross.
 - Coils are drawn over a gradient or level, so the tank's temperatures still show.
 - A vessel with coils is drawn larger so they stay readable (×1.25, ×1.5, ×1.8 for one, two,
   three or more).
@@ -204,6 +208,28 @@ their size.
 ![A buffer tank with three coils](docs/images/coils.png)
 
 [`examples/coils.mmd`](examples/coils.mmd) has this example.
+
+### Nozzles
+
+Named connection points on any equipment (not tees and valves, which have their own), so the
+lines of a busy piece of equipment are spread out, in an order you choose, and described:
+
+```
+nozzle CV n1 right "CH flow"            %% nozzle TAG id left|right|top|bottom ["Description"]
+nozzle CV n2 right "CH return"
+nozzle CV n4 left "DHW out"
+nozzle CV n3 left "DHW in"
+CV.n1 --> C-1                           %% a line from a nozzle…
+C-3 --> CV.n2                           %% …or to one
+```
+
+- Nozzles on one side are spread evenly along it in the order written (top to bottom on the left
+  and right, left to right on the top and bottom): reorder them to untangle lines.
+- Each is drawn as a short stub with its description in small text (and as a tooltip); room is
+  kept for them, so the equipment's own labels move clear.
+- A symbol grows when a side has more nozzles than fit; an image or icon keeps its size and is
+  drawn inside an outline that carries the nozzles.
+- Lines without a nozzle attach as before.
 
 ### Solar and electrical
 
@@ -388,22 +414,21 @@ package to `config/www/mdi.json` and set `icon_packs: { mdi: /local/mdi.json }`.
 
 ### Example: home heating
 
-[`examples/home-heating.mmd`](examples/home-heating.mmd) is a real installation: the central
-heating (`CV`) feeds a solar buffer and two underfloor heating circuits (*vloerverwarming*),
-kitchen and studio, each with its own pump, and the returns join before going back. Its states
-are Home Assistant templates (the boiler burner and the two pump relays), so it is meant as the
-card's `content`.
+[`examples/home-heating.mmd`](examples/home-heating.mmd) is a real installation, meant as the
+card's `content`: the central heating (`CV`, with four described nozzles: CH flow and return,
+domestic hot water in and out) feeds radiators and two pumped underfloor heating circuits
+(*vloerverwarming*, kitchen and studio). The returns pass a 3-way bypass valve that can send
+them through the CV coil of a solar buffer, which a solar collector heats through a second coil;
+domestic cold water is preheated in the buffer before the central heating.
 
-Every line is named and styled by class. Fixed classes come first (flow `warm`, returns
-`return`); live classes after them switch whole lines in the card: the flow turns `hot` while
-the burner fires, and a circuit goes `off` (grey) while its pump stands still:
+Every line is named and styled by class: fixed classes first (flow `warm`, returns `return`),
+then live classes from Home Assistant: the heating flow turns `hot` while the burner fires
+(and stays `warm` while hot water is tapped), and each underfloor circuit follows its pump and
+the boiler's display code:
 
 ```
-CV m1@--> T-1
-P-1 k1@--> VV-Keuken
-class m1,m2,m3,m4,k1,s1 warm
-class m1,m2,m3,m4 ${if(is_state('binary_sensor.boiler_burner', 'on'), 'hot', 'warm')}
-class k1 ${if(is_state('switch.keuken_cv_pomp_vv_lsc_plug_relay', 'on'), if(is_state('binary_sensor.boiler_burner', 'on'), 'hot', 'warm'), 'off')}
+class m1,m2,m3,m4 ${if(is_state('binary_sensor.boiler_burner', 'on'), '${if(is_state("binary_sensor.boiler_hot_water_tap", "on"), "warm", "hot")}', 'warm')}
+class k1 ${if(is_state('switch.keuken_cv_pomp_vv_lsc_plug_relay', 'on'), '${if(attr("water_heater.boiler", "display_code") == 0, "hot", "warm")}', '${if(attr("water_heater.boiler", "display_code") == 0, "warm", "off")}')}
 ```
 
 Outside Home Assistant, as in this image, the templates are not filled in: those `class` lines

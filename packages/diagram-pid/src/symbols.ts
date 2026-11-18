@@ -364,7 +364,14 @@ export interface CoilShape {
  * zig-zag across the vessel and straight back to the lower one. With a nozzle on each wall: a
  * zig-zag straight through, from the inlet's wall to the outlet's.
  */
-export function coilShape(type: EquipmentType, coil: Coil, sideIn: 'left' | 'right', sideOut: 'left' | 'right' = sideIn): CoilShape | undefined {
+export function coilShape(
+  type: EquipmentType,
+  coil: Coil,
+  sideIn: 'left' | 'right',
+  sideOut: 'left' | 'right' = sideIn,
+  /** With both nozzles on one wall: the inlet is the lower nozzle. */
+  inletLow = false,
+): CoilShape | undefined {
   const side = sideIn;
   const inside = interiorOf(type);
   if (!inside) return undefined;
@@ -397,7 +404,9 @@ export function coilShape(type: EquipmentType, coil: Coil, sideIn: 'left' | 'rig
     return { inlet: { x: wallOf(sideIn), y: mid }, outlet: { x: wallOf(sideOut), y: mid }, path };
   }
   const path = `M${r(wall(yIn))} ${r(yIn)} H${r(near)} ${zig.join(' ')} V${r(yOut)} H${r(wall(yOut))}`;
-  return { inlet: { x: wall(yIn), y: yIn }, outlet: { x: wall(yOut), y: yOut }, path };
+  const upper = { x: wall(yIn), y: yIn };
+  const lower = { x: wall(yOut), y: yOut };
+  return inletLow ? { inlet: lower, outlet: upper, path } : { inlet: upper, outlet: lower, path };
 }
 
 /**

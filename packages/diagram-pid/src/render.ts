@@ -20,7 +20,7 @@ import {
 import type { MeasuredLabel } from '@mermaid-js/core/text';
 import type { LayoutModelNode, Side } from '@mermaid-js/core/layout';
 import { hopPaths } from '@mermaid-js/core/layout/hops';
-import { ARROW, coilKey, drawsArrow, endSides, LABEL_GAP, LINE_NUMBER_GAP, type NodePlacement, type PidLayout } from './layout.js';
+import { ARROW, coilKey, drawsArrow, endSides, LABEL_GAP, LINE_NUMBER_GAP, nozzlePoints, type NodePlacement, type PidLayout } from './layout.js';
 import { PORTS, type Equipment, type EquipmentType, type PidModel, type Port, type Stream } from './model.js';
 import { boreProblem, breakerClosed, connectedPorts, portOpen } from './state.js';
 import { coilShape, interiorOf, symbolFor, VALVE3_ACTUATOR_DROP, type Interior, type SymbolDef, type SymbolPart } from './symbols.js';
@@ -78,8 +78,10 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     if (!edge || edge.points.length < 2) return [];
     const pts = edge.points.map((p) => ({ x: p.x, y: p.y }));
     const sides = endSides(model.direction, s, byId, mirrored, layout.coilSides);
-    attach(pts, false, layout, byId.get(s.source), sides.source, coilNozzle(layout, byId.get(s.source), s.sourceCoil, 'outlet'), portDepth(layout, s.source, s.sourcePort), slots.get(`${s.id}:source`));
-    attach(pts, true, layout, byId.get(s.target), sides.target, coilNozzle(layout, byId.get(s.target), s.targetCoil, 'inlet'), portDepth(layout, s.target, s.targetPort), slots.get(`${s.id}:target`));
+    const fixedAt = (id: string, nozzle: string | undefined, coil: number | undefined, end: 'inlet' | 'outlet') =>
+      nozzleAt(layout, byId.get(id), nozzle) ?? coilNozzle(layout, byId.get(id), coil, end);
+    attach(pts, false, layout, byId.get(s.source), sides.source, fixedAt(s.source, s.sourceNozzle, s.sourceCoil, 'outlet'), portDepth(layout, s.source, s.sourcePort), slots.get(`${s.id}:source`));
+    attach(pts, true, layout, byId.get(s.target), sides.target, fixedAt(s.target, s.targetNozzle, s.targetCoil, 'inlet'), portDepth(layout, s.target, s.targetPort), slots.get(`${s.id}:target`));
     const others = [...layout.nodes].filter(([id]) => id !== s.source && id !== s.target).map(([, n]) => n);
     if (byId.get(s.source)?.type === 'tee') bendAtTee(pts, false, others);
     if (byId.get(s.target)?.type === 'tee') bendAtTee(pts, true, others);
@@ -204,6 +206,7 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     if (eq.type === 'breaker') drawBlade(w, eq, styled.paint);
     w.close();
     fillMarks?.();
+    if (eq.nozzles?.length) drawNozzles(w, eq, place, node, styled, layout.fontSize - 3);
     for (const p of teeDots.get(eq.id) ?? []) w.leaf('circle', { class: 'tee-dot', cx: r(p.x), cy: r(p.y), r: 3.5, fill: styled.paint.border, stroke: 'none' });
     if (place.labels.bubble) drawBubble(w, place.labels.bubble, node, styled.text);
     drawLabels(w, layout, node, place, styled.text);
@@ -257,17 +260,23 @@ function drawCustom(w: SvgWriter, eq: Equipment, place: NodePlacement, look: Sta
   const { width, height } = place;
   const frame = (attrs: Attrs) => w.leaf('rect', { x: -3, y: -3, width: width + 6, height: height + 6, rx: 4, ...attrs });
   if (styled.painted) frame({ fill: styled.paint.bg, stroke: styled.paint.border, 'stroke-width': 1.2, ...styled.shape });
+  // With nozzles, the picture sits in the middle of an outline that carries them.
+  if (place.framed && !styled.painted)
+    w.leaf('rect', { class: 'nozzle-frame', x: 0, y: 0, width, height, rx: 4, fill: 'none', stroke: styled.paint.border, 'stroke-width': 1.2 });
+  const content = eq.image ? { width: eq.image.width, height: eq.image.height } : { width: eq.icon?.size ?? width, height: eq.icon?.size ?? height };
+  const dx = place.framed ? (width - content.width) / 2 : 0;
+  const dy = place.framed ? (height - content.height) / 2 : 0;
   let drawn = false;
   if (eq.image) {
     const href = checkImageUrl(imageUrl(eq.image.url, ctx), { securityLevel: ctx.securityLevel, warn: (w) => ctx.warn(w) });
     if (href) {
-      w.leaf('image', { class: 'custom-image', href, x: 0, y: 0, width, height, preserveAspectRatio: 'xMidYMid meet' });
+      w.leaf('image', { class: 'custom-image', href, x: r(dx), y: r(dy), width: content.width, height: content.height, preserveAspectRatio: 'xMidYMid meet' });
       drawn = true;
     }
   } else if (eq.icon) {
     const glyph = ctx.icon?.(eq.icon.name, eq.icon.size, { paint: styled.paint.border });
     if (glyph) {
-      w.open('g', { class: 'custom-icon' });
+      w.open('g', { class: 'custom-icon', transform: translate(r(dx), r(dy)) });
       writeFragment(w, glyph);
       w.close();
       drawn = true;
@@ -552,9 +561,11 @@ function drawLabels(w: SvgWriter, layout: PidLayout, node: Point, place: NodePla
   const fs = layout.fontSize;
   let cx = node.x;
   let y = node.y - labels.height / 2;
-  if (side === 'below') y = node.y + place.height / 2 + LABEL_GAP;
-  else if (side === 'above') y = node.y - place.height / 2 - LABEL_GAP - labels.height;
-  else cx = node.x + (side === 'right' ? 1 : -1) * (place.width / 2 + LABEL_GAP + labels.width / 2);
+  // Past the symbol and the room its nozzles take.
+  const { x: mx, y: my } = place.margin;
+  if (side === 'below') y = node.y + place.height / 2 + my + LABEL_GAP;
+  else if (side === 'above') y = node.y - place.height / 2 - my - LABEL_GAP - labels.height;
+  else cx = node.x + (side === 'right' ? 1 : -1) * (place.width / 2 + mx + LABEL_GAP + labels.width / 2);
   const line = (l: MeasuredLabel | undefined, attrs: Parameters<SvgWriter['label']>[3]) => {
     if (!l) return;
     w.label(l, cx, y + l.height / 2, { ...text, ...attrs });
@@ -575,12 +586,55 @@ function portDepth(layout: PidLayout, id: string, port: Port | undefined): numbe
   return port === 'C' && place ? 33 * place.scale : undefined;
 }
 
+/** Where a line meets nozzle `id` of `eq`: the outer end of its stub. */
+function nozzleAt(layout: PidLayout, eq: Equipment | undefined, id: string | undefined): Point | undefined {
+  if (!eq || !id) return undefined;
+  const node = layout.nodes.get(eq.id);
+  const place = layout.placements.get(eq.id);
+  return node && place ? nozzlePoints(eq, place, node).get(id)?.outer : undefined;
+}
+
+/**
+ * A piece of equipment's nozzles: each a short stub out of the symbol, with its description in
+ * small text beside it, above the line on the left and right, reading upwards on the top and bottom.
+ */
+function drawNozzles(w: SvgWriter, eq: Equipment, place: NodePlacement, node: Point, styled: Styled, fontSize: number): void {
+  const points = nozzlePoints(eq, place, node);
+  w.open('g', { class: 'nozzles' });
+  for (const z of eq.nozzles ?? []) {
+    const p = points.get(z.id);
+    if (!p) continue;
+    w.open('g', { class: `nozzle nozzle-${z.id}` });
+    if (z.label) {
+      w.open('title');
+      w.text(z.label);
+      w.close();
+    }
+    w.leaf('path', { d: pathBuilder().moveTo(r(p.edge.x), r(p.edge.y)).lineTo(r(p.outer.x), r(p.outer.y)).done(), fill: 'none', stroke: styled.paint.border, 'stroke-width': 2 });
+    const label = place.nozzleLabels.get(z.id);
+    if (label) {
+      const attrs = { ...styled.text, class: 'nozzle-label', 'font-size': fontSize };
+      if (z.side === 'left' || z.side === 'right') {
+        const sign = z.side === 'right' ? 1 : -1;
+        w.label(label, p.outer.x + sign * (3 + label.width / 2), p.outer.y - label.height / 2 - 1, attrs);
+      } else {
+        const sign = z.side === 'bottom' ? 1 : -1;
+        w.open('g', { transform: transforms(translate(r(p.outer.x - label.height / 2 - 2), r(p.outer.y + sign * (3 + label.width / 2))), rotate(-90)) });
+        w.label(label, 0, 0, attrs);
+        w.close();
+      }
+    }
+    w.close();
+  }
+  w.close();
+}
+
 /** Where a line meets coil `i` of `eq`, in diagram coordinates: its inlet or outlet nozzle. */
 function coilNozzle(layout: PidLayout, eq: Equipment | undefined, i: number | undefined, end: 'inlet' | 'outlet'): Point | undefined {
   if (!eq || i === undefined || !eq.coils?.[i]) return undefined;
   const node = layout.nodes.get(eq.id);
   const place = layout.placements.get(eq.id);
-  const shape = coilShape(eq.type, eq.coils[i], coilSide(layout, eq, i, 'in'), coilSide(layout, eq, i, 'out'));
+  const shape = coilShape(eq.type, eq.coils[i], coilSide(layout, eq, i, 'in'), coilSide(layout, eq, i, 'out'), layout.coilInletLow.has(`${eq.id}#${i}`));
   if (!node || !place || !shape) return undefined;
   const p = shape[end];
   return { x: node.x - place.width / 2 + p.x * place.scale, y: node.y - place.height / 2 + p.y * place.scale };
@@ -589,7 +643,7 @@ function coilNozzle(layout: PidLayout, eq: Equipment | undefined, i: number | un
 /** Heat exchanger coils inside a vessel, over its contents; each named one has a tooltip. */
 function drawCoils(w: SvgWriter, eq: Equipment, layout: PidLayout, paint: Paint, f: number): void {
   eq.coils?.forEach((coil, i) => {
-    const shape = coilShape(eq.type, coil, coilSide(layout, eq, i, 'in'), coilSide(layout, eq, i, 'out'));
+    const shape = coilShape(eq.type, coil, coilSide(layout, eq, i, 'in'), coilSide(layout, eq, i, 'out'), layout.coilInletLow.has(`${eq.id}#${i}`));
     if (!shape) return;
     w.open('g', { class: `coil coil${i + 1}` });
     if (coil.name) {
@@ -763,7 +817,9 @@ function planSlots(
     const sides = endSides(model.direction, s, byId, mirrored, layout.coilSides);
     for (const atEnd of [false, true]) {
       const eq = byId.get(atEnd ? s.target : s.source);
-      const fixedEnd = atEnd ? s.targetCoil !== undefined || sides.target : s.sourceCoil !== undefined || sides.source;
+      const fixedEnd = atEnd
+        ? s.targetCoil !== undefined || s.targetNozzle !== undefined || sides.target
+        : s.sourceCoil !== undefined || s.sourceNozzle !== undefined || sides.source;
       if (!eq || eq.type === 'tee' || fixedEnd) continue;
       const node = layout.nodes.get(eq.id);
       if (!node) continue;

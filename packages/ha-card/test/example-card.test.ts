@@ -78,7 +78,7 @@ describe('examples/all-capabilities.card.yaml', () => {
       for (const raw of text.split('\n')) {
         const line = raw.trim();
         if (!line || line.startsWith('%%')) continue;
-        const word = /^(classDef|class|style|linkStyle|pipe|stream|gradient-range|gradient-marks|gradient|level|coil|actuator|size|image|icon|title)\b/.exec(line);
+        const word = /^(classDef|class|style|linkStyle|pipe|stream|gradient-range|gradient-marks|gradient|level|coil|actuator|size|nozzle|image|icon|title)\b/.exec(line);
         if (word) found.add(word[1]!);
         for (const op of ['-->', '---', '-.->', '-.-', '==>', '===']) if (line.includes(` ${op}`)) found.add(op);
         const decl = /^[A-Za-z][\w.-]*\s*:\s*([a-z0-9]+)/.exec(line);
@@ -137,17 +137,24 @@ describe('examples/all-capabilities.card.yaml', () => {
 });
 
 describe('examples/home-heating.mmd in the card', () => {
-  async function render(kitchen: string, studio: string, burner: string) {
+  // Lines in written order, by their names.
+  const NAMES = ['m1', 'm2', 'm3', 'k1', 's1', 'm4', 'r1', 'r2', 'r8', 'r3', 'r4', 'r5', 'r6', 'r7', 'hw2', 'cw1', 'hw1', 'sh1', 'sh2', 'sh3'];
+  type States = { burner: string; tap: string; kitchen: string; studio: string; displayCode: number };
+  async function render(st: States) {
     const content = readFileSync(`${import.meta.dirname}/../../../examples/home-heating.mmd`, 'utf8');
     const card = document.createElement('pid-card') as PidCard;
     document.body.appendChild(card);
     card.setConfig({ type: 'custom:pid-card', content });
-    const e = (id: string, state: string): HassEntity => ({ entity_id: id, state, attributes: {}, last_changed: '', last_updated: '' });
+    const e = (id: string, state: string, attributes: Record<string, unknown> = {}): HassEntity => ({ entity_id: id, state, attributes, last_changed: '', last_updated: '' });
     const states = Object.fromEntries(
       [
-        e('switch.keuken_cv_pomp_vv_lsc_plug_relay', kitchen),
-        e('switch.studio_cv_pomp_vv_lsc_plug_relay', studio),
-        e('binary_sensor.boiler_burner', burner),
+        e('water_heater.boiler', 'postrun_ch', { display_code: st.displayCode }),
+        e('binary_sensor.boiler_burner', st.burner),
+        e('binary_sensor.boiler_hot_water_tap', st.tap),
+        e('switch.keuken_cv_pomp_vv_lsc_plug_relay', st.kitchen),
+        e('switch.studio_cv_pomp_vv_lsc_plug_relay', st.studio),
+        e('sensor.collector_top_temp', '61.2'),
+        e('sensor.collector_bottom_temp', '44.8'),
       ].map((x) => [x.entity_id, x]),
     );
     const done = new Promise((r) => card.addEventListener('pid-card-rendered', r, { once: true }));
@@ -155,16 +162,27 @@ describe('examples/home-heating.mmd in the card', () => {
     await done;
     const root = card.shadowRoot!;
     expect(root.querySelector<HTMLElement>('.error')!.hidden).toBe(true);
-    // Lines in written order: m1-m4 main flow, k1 kitchen, s1 studio, r1-r4 returns.
-    return [...Array(10).keys()].map((n) => root.querySelector(`[data-id="edge-s${n}"] path`)!.getAttribute('stroke'));
+    const stroke = (name: string) => root.querySelector(`[data-id="edge-s${NAMES.indexOf(name)}"] path`)!.getAttribute('stroke');
+    return { stroke, svg: root.querySelector('.diagram')!.innerHTML };
   }
   const [red, orange, grey, blue] = ['#c62828', '#ef6c00', '#9e9e9e', '#5b8fd0'];
 
-  it('burner on: main flow and running circuits red, a stopped circuit grey, returns blue', async () => {
-    expect(await render('on', 'off', 'on')).toEqual([red, red, red, red, red, grey, blue, blue, blue, blue]);
+  it('burner on, no tap: the flow is hot; a running circuit hot, a stopped one warm', async () => {
+    const { stroke, svg } = await render({ burner: 'on', tap: 'off', kitchen: 'on', studio: 'off', displayCode: 0 });
+    expect(['m1', 'm2', 'm3', 'm4'].map(stroke)).toEqual([red, red, red, red]);
+    expect([stroke('k1'), stroke('s1')]).toEqual([red, orange]);
+    expect(['r1', 'r4', 'r7'].map(stroke)).toEqual([blue, blue, blue]);
+    expect(svg).toContain('61 °C'); // the collector's live reading
   });
 
-  it('burner off: main flow and running circuits orange', async () => {
-    expect(await render('on', 'off', 'off')).toEqual([orange, orange, orange, orange, orange, grey, blue, blue, blue, blue]);
+  it('burner off, other display code: the flow is warm; a running circuit warm, a stopped one off', async () => {
+    const { stroke } = await render({ burner: 'off', tap: 'off', kitchen: 'on', studio: 'off', displayCode: 1 });
+    expect(['m1', 'm2', 'm3', 'm4'].map(stroke)).toEqual([orange, orange, orange, orange]);
+    expect([stroke('k1'), stroke('s1')]).toEqual([orange, grey]);
+  });
+
+  it('burner on with the hot water tap open: the heating flow stays warm', async () => {
+    const { stroke } = await render({ burner: 'on', tap: 'on', kitchen: 'off', studio: 'off', displayCode: 0 });
+    expect(['m1', 'm2', 'm3', 'm4'].map(stroke)).toEqual([orange, orange, orange, orange]);
   });
 });

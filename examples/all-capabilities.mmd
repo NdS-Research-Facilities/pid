@@ -71,7 +71,7 @@ pid LR
   J-1 --> FV-101 --> J-2
   J-1 --> V-02 --> J-2
   J-2 --> E-101 -->|3| J-3 --> R-101 -->|4| C-101
-  HP-1 heat@--> E-101
+  HP-1.out heat@--> E-101
   C-101 -->|5| V-201 --> K-101 -->|6| D-101
   D-101 --> J-4 --> V3-101.A
   V3-101.B --> D-3
@@ -112,7 +112,7 @@ pid LR
   M-1: meter "Grid meter" = export 1.1 kW
   G-1: grid "Grid"
   H-1: consumer "House" = 2.1 kW
-  SC-1 --> HP-1
+  SC-1 --> HP-1.src
   PV-1 ==>|DC| Q-1 ==> INV-1 ==>|AC| M-1 ==> G-1
   INV-1 === BAT-1
   M-1 ==> H-1
@@ -123,7 +123,7 @@ pid LR
 
   %% ── A heating coil in the bottoms tank, fed by the solar collector; a larger reactor ─
   coil T-101 bottom "Solar coil"
-  coil T-101 @55% right "Cooling coil"
+  coil T-101 @55% right left "Cooling coil"
   CW-1: feed "Cooling water"
   CW-2: product "Cooling return"
   SC-1 --> T-101.coil1
@@ -156,6 +156,8 @@ pid LR
   class P-101,K-101 running
   style R-101 fill:#fff8e1,stroke:#ff8f00
   image HP-1 assets/heat-pump.png 64
+  nozzle HP-1 src left "Source in"
+  nozzle HP-1 out right "Heat out"
   icon PT-103 mdi:gauge 40
   icon TT-107 mdi:snowflake-thermometer 40
   icon AT-106 mdi:flask-outline 40

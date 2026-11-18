@@ -226,6 +226,8 @@ describe('all-capabilities example', () => {
     );
     expect(eq.find((e) => e.type === 'breaker' && e.state?.raw === 'open')).toBeDefined();
     expect(eq.some((e) => e.gradient?.some((st) => st.color)) && eq.some((e) => e.gradientRange) && eq.some((e) => e.level?.color)).toBe(true);
+    expect(eq.some((e) => e.nozzles?.some((z) => z.label)) && model.streams.some((s) => s.sourceNozzle) && model.streams.some((s) => s.targetNozzle)).toBe(true);
+    expect(coils.some((c) => c.sideOut)).toBe(true);
   });
 });
 
@@ -250,6 +252,114 @@ describe('solar and electrical', () => {
   it('shows a number on other equipment as written, not as a valve position', () => {
     const { model } = parsePid('pid\n  PV-1: pv = 3.4\n');
     expect(model.equipment[0]!.state?.kind).toBe('position');
+  });
+});
+
+describe('coil walls', () => {
+  it('names the inlet and outlet walls separately, or both with one word', () => {
+    const { model, diagnostics } = parsePid('pid\n  T: tank\n  coil T bottom left right "A"\n  coil T top right\n  coil T middle\n');
+    expect(diagnostics).toEqual([]);
+    expect(model.equipment[0]!.coils).toEqual([
+      { height: 0.2, side: 'left', sideOut: 'right', name: 'A' },
+      { height: 0.8, side: 'right' },
+      { height: 0.5 },
+    ]);
+  });
+
+  it('puts the inlet on the lower nozzle when asked, on one wall only', async () => {
+    const { coilShape } = await import('../src/symbols.js');
+    const coil = { height: 0.5 };
+    const up = coilShape('tank', coil, 'right', 'right')!;
+    const low = coilShape('tank', coil, 'right', 'right', true)!;
+    expect(up.inlet.y).toBeLessThan(up.outlet.y);
+    expect(low.inlet).toEqual(up.outlet);
+    expect(low.outlet).toEqual(up.inlet);
+    // Through the tank: the flag does not apply, both nozzles at mid-height.
+    const through = coilShape('tank', coil, 'left', 'right', true)!;
+    expect(through.inlet.y).toBe(through.outlet.y);
+  });
+});
+
+describe('nozzles', () => {
+  const src = `pid LR
+  CV: block "Central heating"
+  icon CV mdi:heat-pump 50
+  nozzle CV n1 right "CH flow"
+  nozzle CV n2 right "CH return"
+  nozzle CV n3 left "DHW in"
+  T: tank "Buffer"
+  nozzle T top top "Vent"
+  nozzle T a right
+  nozzle T b right
+  nozzle T c right
+  nozzle T d right
+  nozzle T e right
+  CV.n1 --> R
+  R --> CV.n2
+  F --> CV.n3
+  T.a --> X
+  T.top --> V
+`;
+
+  it('reads nozzles and lines to them', () => {
+    const { model, diagnostics } = parsePid(src);
+    expect(diagnostics).toEqual([]);
+    const cv = model.equipment.find((e) => e.id === 'CV')!;
+    expect(cv.nozzles).toEqual([
+      { id: 'n1', side: 'right', label: 'CH flow' },
+      { id: 'n2', side: 'right', label: 'CH return' },
+      { id: 'n3', side: 'left', label: 'DHW in' },
+    ]);
+    expect(model.streams.map((s) => `${s.source}${s.sourceNozzle ? '.' + s.sourceNozzle : ''}>${s.target}${s.targetNozzle ? '.' + s.targetNozzle : ''}`)).toEqual([
+      'CV.n1>R', 'R>CV.n2', 'F>CV.n3', 'T.a>X', 'T.top>V',
+    ]);
+    expect(model.equipment.some((e) => e.id.includes('.'))).toBe(false);
+  });
+
+  it('reports duplicate and unknown nozzles, and nozzles on tees and valves', () => {
+    const msgs = parsePid('pid\n  P: pump\n  nozzle P a left\n  nozzle P a right\n  P.zz --> Q\n  J: tee\n  nozzle J x left\n  V: valve\n  nozzle V y left\n').diagnostics.map((d) => d.message);
+    expect(msgs).toEqual([
+      expect.stringContaining('P already has a nozzle "a"'),
+      expect.stringContaining('P has no nozzle "zz"'),
+      expect.stringContaining('J is a tee: it has its own connection points'),
+      expect.stringContaining('V is a valve: it has its own connection points'),
+    ]);
+  });
+
+  it('draws stubs with descriptions, ends lines on them, and makes room', async () => {
+    const mermaid = createMermaid();
+    await mermaid.registerExternalDiagrams([pid]);
+    const { svg } = await mermaid.render('nz', src);
+    expect(svg.match(/class="nozzle nozzle-/g)).toHaveLength(9);
+    expect(svg).toContain('<title>CH flow</title>');
+    expect(svg.match(/class="nozzle-label"/g)).toHaveLength(4);
+    // An icon with nozzles gets an outline to carry them.
+    expect(svg).toContain('class="nozzle-frame"');
+    // Each line to a nozzle ends on its stub's outer end.
+    const stubs = [...svg.matchAll(/class="nozzle nozzle-(\w+)"[\s\S]*?<path d="M[^L]*L(-?[\d.]+),(-?[\d.]+)"/g)].map((m) => ({ id: m[1]!, x: +m[2]!, y: +m[3]! }));
+    const ends = [...svg.matchAll(/<g class="stream [^"]*" data-id="edge-(s\d+)"[^>]*>\s*<path d="([^"]+)"/g)].map((m) => {
+      const p = [...m[2]!.matchAll(/[ML]\s*(-?[\d.]+)[ ,](-?[\d.]+)/g)].map((q) => ({ x: +q[1]!, y: +q[2]! }));
+      return [p[0]!, p[p.length - 1]!];
+    });
+    const on = (id: string) => {
+      const st = stubs.find((z) => z.id === id)!;
+      return ends.some((e) => e.some((p) => Math.abs(p.x - st.x) < 1 && Math.abs(p.y - st.y) < 1));
+    };
+    for (const id of ['n1', 'n2', 'n3', 'a', 'top']) expect(on(id), id).toBe(true);
+  });
+
+  it('grows a symbol whose side has more nozzles than room', async () => {
+    const { layoutPid } = await import('../src/layout.js');
+    void layoutPid;
+    const { model } = parsePid(src);
+    const t = model.equipment.find((e) => e.id === 'T')!;
+    // Five nozzles on the right need (5 + 1) × 18 px; a plain tank is 80 px tall.
+    expect(t.nozzles!.filter((z) => z.side === 'right')).toHaveLength(5);
+    const mermaid = createMermaid();
+    await mermaid.registerExternalDiagrams([pid]);
+    const { svg } = await mermaid.render('nz2', src);
+    const scale = /data-id="node-T"[^>]*>\s*<g transform="[^"]*scale\(([\d.]+)/.exec(svg);
+    expect(Number(scale?.[1])).toBeCloseTo((6 * 18) / 80, 2);
   });
 });
 
@@ -549,13 +659,15 @@ describe('Mermaid v13 integration', () => {
         expect(svg.match(/data-id="node-(MV-8|V3-9)"/g)).toHaveLength(2);
       }
       if (file === 'home-heating.mmd') {
-        // Two pumped circuits and a solar buffer; every line a named pipe in a class. Outside Home
-        // Assistant the live classes are not filled in, so the fixed ones stay: flow warm, returns.
+        // The real installation: 20 named pipes, CV's four described nozzles, three tees. Outside
+        // Home Assistant the live classes are not filled in, so only the fixed ones apply.
         expect(svg).not.toContain('stream electric');
-        expect(svg.match(/class="stream process/g)).toHaveLength(10);
-        expect(svg.match(/class="stream process class-warm"/g)).toHaveLength(6);
-        expect(svg.match(/class="stream process class-return"/g)).toHaveLength(4);
-        expect(svg.match(/class="tee-dot"/g)!.length).toBeGreaterThanOrEqual(2);
+        expect(svg.match(/class="stream process/g)).toHaveLength(20);
+        expect(svg.match(/class="stream process class-warm"/g)).toHaveLength(7);
+        expect(svg.match(/class="stream process( stream-blocked)? class-return"/g)).toHaveLength(8);
+        expect(svg.match(/class="nozzle nozzle-n\d"/g)).toHaveLength(4);
+        for (const label of ['CH flow', 'CH return', 'DHW in', 'DHW out']) expect(svg).toContain(`<title>${label}</title>`);
+        expect(svg.match(/class="tee-dot"/g)!.length).toBeGreaterThanOrEqual(3);
       }
       if (file === 'coils.mmd') {
         expect(svg.match(/class="coil coil\d"/g)).toHaveLength(3);

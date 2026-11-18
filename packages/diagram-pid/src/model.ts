@@ -89,6 +89,8 @@ export interface Equipment {
   coils?: Coil[];
   /** `size TAG 1.5`: the symbol drawn this many times its usual size. */
   size?: number;
+  /** `nozzle CV n1 right "CH flow"`: named connection points, reached as `CV.n1`. */
+  nozzles?: Nozzle[];
   ast: string;
 }
 
@@ -116,12 +118,27 @@ export interface GradientStop {
   height: number;
 }
 
+/** The side of a symbol a nozzle is on, as drawn (not relative to the flow). */
+export type NozzleSide = 'left' | 'right' | 'top' | 'bottom';
+
+/**
+ * A named connection point on a piece of equipment. Nozzles on one side are spread evenly along
+ * it, in the order they are written; each is drawn as a short stub, with its description.
+ */
+export interface Nozzle {
+  id: string;
+  side: NozzleSide;
+  label?: string;
+}
+
 /** A heat exchanger coil inside a vessel. Lines reach it as `TAG.coil1`, `TAG.coil2`, … */
 export interface Coil {
   /** Height of its middle from the bottom, 0 … 1: top 0.8, middle 0.5, bottom 0.2, or `@NN%`. */
   height: number;
-  /** The wall its nozzles are on; when absent, the side its lines come from. */
+  /** The inlet nozzle's wall (both nozzles', without `sideOut`); when absent, where its line comes from. */
   side?: 'left' | 'right';
+  /** The outlet nozzle's wall, when it differs: `coil T-1 bottom left right`. */
+  sideOut?: 'left' | 'right';
   /** Shown as a tooltip. */
   name?: string;
 }
@@ -147,6 +164,9 @@ export interface Stream {
   /** A coil inside the source or target vessel (0 = `coil1`): out of its outlet, into its inlet. */
   sourceCoil?: number;
   targetCoil?: number;
+  /** A named nozzle on the source or target (`CV.n1`). */
+  sourceNozzle?: string;
+  targetNozzle?: string;
   /** The stream tag shown on the line, e.g. `1`. */
   label?: string;
   /** `pipe 1 2"-CW-101-A1`: the line number written along the pipe. */
