@@ -117,7 +117,7 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
 
   w.open('g', { class: 'streams' });
   routes.forEach(({ s, edge, pts, d }, i) => {
-    const blocked = (s.kind === 'process' || s.kind === 'electric') && isBlocked(s, byId);
+    const blocked = (s.kind === 'process' || s.kind === 'electric') && isBlocked(s, byId, model.streams);
     // linkStyle: `default` first, then the line's own; Mermaid checks every declaration.
     // `linkStyle default`, then the line's classes, then its own `linkStyle` / `style`.
     const decls = [
@@ -1300,7 +1300,21 @@ function dedupe(pts: readonly Point[]): Point[] {
 }
 
 /** A stream is blocked when either end is a valve port that is shut. */
-function isBlocked(s: Stream, byId: Map<string, Equipment>): boolean {
+function isBlocked(s: Stream, byId: Map<string, Equipment>, streams: readonly Stream[] = [], seen = new Set<string>()): boolean {
+  // `follow`: also blocked when what it follows is (a line it follows only once, so a loop of
+  // lines following each other ends).
+  seen.add(s.id);
+  const followed = (s.follows ?? []).some((f) => {
+    if (f.line !== undefined) {
+      const other = streams.find((o) => o.id === f.line);
+      return !!other && !seen.has(other.id) && isBlocked(other, byId, streams, seen);
+    }
+    const eq = f.eq ? byId.get(f.eq) : undefined;
+    // A relief valve is closed in normal service: as for its own lines, that blocks nothing.
+    if (eq?.type === 'valve' && eq.valveKind === 'relief') return false;
+    return !!eq && portOpen(eq, f.port) === false;
+  });
+  if (followed) return true;
   const at = (id: string, port: Stream['sourcePort']) => {
     const eq = byId.get(id);
     // A relief valve is closed in normal service: its lines stay solid. The valve itself still

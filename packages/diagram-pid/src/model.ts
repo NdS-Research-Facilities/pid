@@ -193,6 +193,11 @@ export interface Stream {
   label?: string;
   /** `pipe 1 2"-CW-101-A1`: the line number written along the pipe. */
   lineNumber?: string;
+  /**
+   * `follow r5 V-1.C`: also shown blocked when this valve port is shut, this valve or breaker
+   * is closed or open, or this line (by stream id) is blocked.
+   */
+  follows?: { eq?: string; port?: Port; line?: string }[];
   /** `linkStyle 3 stroke:#c00` / `style f1 …`: style declarations as written. */
   style?: string[];
   /** `CV f1@--> T-1`: the line's own name, for `class`, `style`, `linkStyle` and `pipe`. */

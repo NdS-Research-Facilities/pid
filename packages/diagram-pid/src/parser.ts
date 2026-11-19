@@ -37,6 +37,8 @@ const CLASSDEF = /^classDef\s+([\w-]+(?:\s*,\s*[\w-]+)*)\s+(.+)$/;
 // (`${if(…, 'off', '')}`) leaves `class k1` behind.
 const CLASS = /^class\s+([A-Za-z][\w.-]*(?:\s*,\s*[A-Za-z][\w.-]*)*)(?:\s+(.*))?$/;
 const CLASS_NAME = /^[\w-]+$/;
+/** `follow LINE[,LINE…] SOURCE`: lines shown blocked whenever a port, valve, breaker or line is. */
+const FOLLOW = /^follow\s+([A-Za-z][\w.-]*(?:\s*,\s*[A-Za-z][\w.-]*)*)\s+([A-Za-z][\w.-]*)$/;
 const STYLE = /^style\s+([A-Za-z][\w.-]*)\s+(.+)$/;
 const IMAGE = /^image\s+([A-Za-z][\w.-]*)\s+(\S+)(?:\s+(\d+)(?:x(\d+))?)?$/;
 const ICON = /^icon\s+([A-Za-z][\w.-]*)\s+([a-z0-9-]+:[a-z0-9-]+)(?:\s+(\d+))?$/i;
@@ -99,6 +101,7 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
   const coilLines: { id: string; start: number; end: number }[] = [];
   // `class` and `style` statements, in order: they can name lines written further down.
   const styling: { id: string; cls?: string; decls?: string[]; start: number; end: number }[] = [];
+  const follows: { lines: string[]; source: string; start: number; end: number }[] = [];
   const actuatorLines: { id: string; start: number; end: number }[] = [];
   const nozzleLines: { id: string; start: number; end: number }[] = [];
   // `CV.n1 = 70 °C`, `T-1.coil1.in = 66 °C`: readings at a nozzle or coil end, once both are known.
@@ -204,6 +207,9 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
       continue;
     } else if ((m = CLASSDEF.exec(line))) {
       for (const name of m[1]!.split(',')) model.classDefs.set(name.trim(), declarations(m[2]!));
+      continue;
+    } else if ((m = FOLLOW.exec(line))) {
+      follows.push({ lines: m[1]!.split(',').map((l) => l.trim()), source: m[2]!, start, end });
       continue;
     } else if ((m = CLASS.exec(line))) {
       // Resolved once every line is read: a named line takes it, anything else is equipment.
@@ -372,6 +378,24 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
     const eq = touch(st.id, st.start, st.end);
     if (st.cls) (eq.classes ??= []).push(st.cls);
     if (st.decls) eq.style = [...(eq.style ?? []), ...st.decls];
+  }
+  // A line follows a valve port (`V-1.C`), a valve or breaker (`V-2`), or another line (`r3`).
+  const BLOCKERS = new Set(['valve', 'valve3', 'breaker']);
+  for (const f of follows) {
+    const port = /^(.+)\.([ABC])$/.exec(f.source);
+    let source: { eq?: string; port?: Port; line?: string } | undefined;
+    if (named.has(f.source)) source = { line: named.get(f.source)!.id };
+    else if (port && byId.get(port[1]!)?.type === 'valve3') source = { eq: port[1]!, port: port[2] as Port };
+    else if (byId.has(f.source) && BLOCKERS.has(byId.get(f.source)!.type)) source = { eq: f.source };
+    else if (byId.has(f.source)) error(`follow ${f.source}: a ${byId.get(f.source)!.type} is never shut; follow a valve, a 3-way valve's port (V-1.C), a breaker or a line`, f.start, f.end);
+    else error(`follow ${f.source}: no line, valve port, valve or breaker is called "${f.source}"`, f.start, f.end);
+    if (!source) continue;
+    for (const name of f.lines) {
+      const line = named.get(name);
+      if (!line) error(`follow: no line is named "${name}"`, f.start, f.end);
+      else if (source.line === line.id) error(`follow: line "${name}" cannot follow itself`, f.start, f.end);
+      else (line.follows ??= []).push(source);
+    }
   }
   for (const ls of linkStyles) {
     if (ls.refs === 'default') {

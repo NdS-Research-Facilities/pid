@@ -64,7 +64,8 @@ option (actions, icon packs, image base, theme).
 | `A --- B` | Instrument connection to the process (thin line) |
 | `A -.-> B`, `A -.- B` | Signal line (dashed), with or without arrow |
 | `A ==> B`, `A === B` | Electrical power cable (orange), with or without arrow (direction of power) |
-| `A f1@--> B` | A named line (any line kind), for `class`, `style`, `linkStyle` and `pipe` |
+| `A f1@--> B` | A named line (any line kind), for `class`, `style`, `linkStyle`, `pipe` and `follow` |
+| `follow r5 V-1.C` | Show named lines blocked whenever a valve port, valve, breaker or other line is |
 | `nozzle TAG id side "Text"`, `TAG.id` | A named connection point on equipment, and a line to it |
 | `coil TAG where … in "Text" out "Text"`, `TAG.coil1.in` | A coil in a vessel, its ends described, and a line to one end |
 | `CV.n1 = 70 °C`, `TAG.coil1.in = 66 °C` | A reading at a nozzle or coil end, without an instrument |
@@ -115,6 +116,20 @@ linkStyle default stroke-width:2px
 `linkStyle` works as in Mermaid: lines are numbered from 0 in the order they are written, and
 `default` applies to every line. A line the state shows as blocked stays dashed whatever its
 style.
+
+A line on a shut valve port is dashed by itself; `follow` dashes other named lines with it, such
+as the rest of a circuit the valve cuts off:
+
+```
+V-1.C r3@--> T-1.coil1          %% dashed when V-1 shuts port C
+T-1.coil1 r5@--> C-3
+follow r5 V-1.C                 %% …and r5 with it
+follow k1,k2 V-2                %% lines blocked while valve V-2 is closed (or a breaker open)
+follow r4 r5                    %% blocked whenever line r5 is
+```
+
+It only shows a state, so it follows the valve's state as the card fills it in. Process lines and
+cables show it; instrument and signal lines are never dashed.
 
 Lines can also be named and styled by class, as in Mermaid flowcharts:
 

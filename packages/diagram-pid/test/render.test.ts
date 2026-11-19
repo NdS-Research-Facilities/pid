@@ -377,6 +377,59 @@ describe('coil ends', () => {
   });
 });
 
+describe('follow', () => {
+  const src = (state: string, extra = '') => `pid LR
+  V-1: valve3 T "Bypass" = ${state}
+  T-1: vessel "Buffer"
+  coil T-1 bottom "CV coil"
+  C-2: tee
+  C-3: tee
+  A --> C-2
+  C-2 r6@--> V-1.A
+  V-1.C r3@--> T-1.coil1
+  T-1.coil1 r5@--> C-3
+  C-3 r7@--> V-1.B
+  C-3 r4@--> B
+  follow r5 V-1.C
+${extra}`;
+  const blocked = async (text: string) => {
+    const mermaid = createMermaid();
+    await mermaid.registerExternalDiagrams([pid]);
+    const { svg } = await mermaid.render('fw', text);
+    const { model } = parsePid(text);
+    const idOf = (name: string) => model.streams.find((s) => s.name === name)!.id;
+    return (name: string) => new RegExp(`class="stream process stream-blocked[^"]*" data-id="edge-${idOf(name)}"`).test(svg);
+  };
+
+  it('shows a line blocked when the valve port it follows is shut, and not when open', async () => {
+    const shut = await blocked(src('AB'));
+    expect(shut('r3')).toBe(true); // on port C itself
+    expect(shut('r5')).toBe(true); // following it
+    expect(shut('r4')).toBe(false);
+    const open = await blocked(src('AC'));
+    expect(open('r3')).toBe(false);
+    expect(open('r5')).toBe(false);
+  });
+
+  it('follows a line, a valve or a breaker too, and several lines at once; loops end', async () => {
+    const extra = '  V-2: valve = closed\n  X --> V-2\n  V-2 x1@--> Y\n  P k1@--> Q\n  P k2@--> R\n  follow k1,k2 V-2\n  follow r4 r5\n  follow r5 r4\n';
+    const is = await blocked(src('AB', extra));
+    expect([is('k1'), is('k2'), is('r4')]).toEqual([true, true, true]);
+    const open = await blocked(src('AC', extra.replace('= closed', '= open')));
+    expect([open('k1'), open('r4'), open('r5')]).toEqual([false, false, false]);
+  });
+
+  it('reports what it cannot follow', () => {
+    const msgs = parsePid(`${src('AB')}  P: pump\n  follow r5 P\n  follow r5 nothing\n  follow zz V-1.C\n  follow r5 r5\n`).diagnostics.map((d) => d.message);
+    expect(msgs).toEqual([
+      expect.stringContaining('follow P: a pump is never shut'),
+      expect.stringContaining('follow nothing: no line, valve port, valve or breaker is called "nothing"'),
+      expect.stringContaining('follow: no line is named "zz"'),
+      expect.stringContaining('follow: line "r5" cannot follow itself'),
+    ]);
+  });
+});
+
 describe('line order on a side', () => {
   // The home heating installation as of v0.7.1 (templates filled in): cold water came in above
   // the hot water outlet on the buffer's left wall, hopping over it.
