@@ -838,41 +838,52 @@ function tapsAtSharedEnds(routes: { s: Stream; drawn: Point[]; d: PathData }[], 
 }
 
 /**
- * Two different lines must not run along the same column or row: where the layout put two runs
- * on one track over a stretch, the later run moves aside (each step by `LINE_GAP`) until it is
- * clear. Lines of one tee share their trunk on purpose, and a run that ends on a symbol stays,
- * so only inner runs move; the runs either side stretch with them and stay straight.
+ * Two different lines must not run along the same column or row, or so close beside each other
+ * (under `NEAR`) that they read as one: where the layout put two runs like that over a stretch,
+ * the later run moves aside (or the earlier, when the later ends on a symbol), `LINE_GAP` clear of
+ * the other, until it is clear. Lines of one tee
+ * share their trunk on purpose, and a run that ends on a symbol stays, so only inner runs move;
+ * the runs either side stretch with them and stay straight.
  */
 function separateOverlaps(routes: { s: Stream; drawn: Point[]; d: PathData }[], byId: ReadonlyMap<string, Equipment>): void {
   const tees = (s: Stream) => [s.source, s.target].filter((id) => byId.get(id)?.type === 'tee');
   const shareTee = (a: Stream, b: Stream) => tees(a).some((t) => tees(b).includes(t));
-  const overlap = (a0: Point, a1: Point, b0: Point, b1: Point): boolean => {
-    const vertical = Math.abs(a0.x - a1.x) < 0.5 && Math.abs(b0.x - b1.x) < 0.5 && Math.abs(a0.x - b0.x) < 0.5;
-    const horizontal = Math.abs(a0.y - a1.y) < 0.5 && Math.abs(b0.y - b1.y) < 0.5 && Math.abs(a0.y - b0.y) < 0.5;
-    if (!vertical && !horizontal) return false;
+  /** Where run b0–b1 lies across run a0–a1's way, when the two run side by side too close over a stretch. */
+  const overlap = (a0: Point, a1: Point, b0: Point, b1: Point): number | undefined => {
+    const vertical = Math.abs(a0.x - a1.x) < 0.5 && Math.abs(b0.x - b1.x) < 0.5 && Math.abs(a0.x - b0.x) < NEAR;
+    const horizontal = Math.abs(a0.y - a1.y) < 0.5 && Math.abs(b0.y - b1.y) < 0.5 && Math.abs(a0.y - b0.y) < NEAR;
+    if (!vertical && !horizontal) return undefined;
     const p = vertical ? 'y' : 'x';
     const lo = Math.max(Math.min(a0[p], a1[p]), Math.min(b0[p], b1[p]));
     const hi = Math.min(Math.max(a0[p], a1[p]), Math.max(b0[p], b1[p]));
-    return hi - lo > 1;
+    return hi - lo > 1 ? (vertical ? b0.x : b0.y) : undefined;
   };
+  // A straight stretch is one run: points in the middle of it would let only part of it move,
+  // tilting the rest.
+  for (const r of routes) r.drawn = straightRuns(r.drawn);
   for (let round = 0; round < 6; round++) {
     let moved = false;
     routes.forEach((r, i) => {
       for (let k = 1; k + 2 < r.drawn.length; k++) {
         const [a0, a1] = [r.drawn[k]!, r.drawn[k + 1]!];
-        const hit = routes.some((o, j) => {
-          if (j >= i || shareTee(r.s, o.s)) return false;
-          for (let m = 0; m + 1 < o.drawn.length; m++) if (overlap(a0, a1, o.drawn[m]!, o.drawn[m + 1]!)) return true;
+        let other: number | undefined;
+        routes.some((o, j) => {
+          if (j === i || shareTee(r.s, o.s)) return false;
+          for (let m = 0; m + 1 < o.drawn.length; m++) {
+            // The later run moves; an earlier one only when the later one ends on a symbol and cannot.
+            const fixed = m === 0 || m + 2 === o.drawn.length;
+            if (j > i && !fixed) continue;
+            if ((other = overlap(a0, a1, o.drawn[m]!, o.drawn[m + 1]!)) !== undefined) return true;
+          }
           return false;
         });
-        if (!hit) continue;
-        if (Math.abs(a0.x - a1.x) < 0.5) {
-          a0.x += LINE_GAP;
-          a1.x += LINE_GAP;
-        } else {
-          a0.y += LINE_GAP;
-          a1.y += LINE_GAP;
-        }
+        if (other === undefined) continue;
+        // On the other's track: step aside as before. Beside it: away from it, to a clear gap.
+        const p = Math.abs(a0.x - a1.x) < 0.5 ? 'x' : 'y';
+        const d = a0[p] - other;
+        const to = Math.abs(d) < 0.5 ? a0[p] + LINE_GAP : other + Math.sign(d) * LINE_GAP;
+        a0[p] = to;
+        a1[p] = to;
         moved = true;
       }
     });
@@ -986,6 +997,8 @@ const CENTRED: ReadonlySet<EquipmentType> = new Set([
 const CORNER = 20;
 /** The least distance between two lines meeting one side of a symbol. */
 const LINE_GAP = 8;
+/** Runs closer side by side than this read as one line (thick styled lines especially). */
+const NEAR = 6;
 /** How far outside the box a stream turns to line up with the symbol. */
 const STUB = 10;
 
@@ -1174,6 +1187,18 @@ function toSegment(p: Point, a: Point, b: Point): number {
 function onRoute(label: Point, pts: readonly Point[]): Point {
   for (let k = 0; k + 1 < pts.length; k++) if (toSegment(label, pts[k]!, pts[k + 1]!) < 2) return label;
   return longestMiddle(pts);
+}
+
+/** Drops the points in the middle of a straight stretch (and repeated ones), keeping the ends and every bend. */
+function straightRuns(pts: readonly Point[]): Point[] {
+  const out: Point[] = [];
+  for (const p of dedupe(pts)) {
+    const [a, b] = [out[out.length - 2], out[out.length - 1]];
+    const straight = a && b && ((Math.abs(a.x - b.x) < 0.01 && Math.abs(b.x - p.x) < 0.01) || (Math.abs(a.y - b.y) < 0.01 && Math.abs(b.y - p.y) < 0.01));
+    if (straight) out[out.length - 1] = p;
+    else out.push(p);
+  }
+  return out;
 }
 
 /** Drops points that repeat the one before them. */

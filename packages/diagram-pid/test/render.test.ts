@@ -568,6 +568,43 @@ function overlappingLines(svg: string): string[] {
   return found;
 }
 
+/**
+ * Pairs of different lines running side by side closer than 6 px (not on one track) over a
+ * stretch, where at least one of the two runs is an inner one (the renderer can move those; the
+ * first and last runs end on a symbol). Hops split a run; collinear pieces count as one run.
+ */
+function nearLines(svg: string): string[] {
+  const runs = [...svg.matchAll(/<g class="stream [^"]*" data-id="edge-(s\d+)"[^>]*>\s*<path d="([^"]+)"/g)].map((m) => {
+    const pts = [...m[2]!.matchAll(/[ML]\s*(-?[\d.]+)[ ,](-?[\d.]+)/g)].map((p) => ({ x: +p[1]!, y: +p[2]! }));
+    const out: { a: Point2; b: Point2; v: boolean }[] = [];
+    for (let k = 0; k + 1 < pts.length; k++) {
+      const [a, b] = [pts[k]!, pts[k + 1]!];
+      const v = Math.abs(a.x - b.x) < 0.5;
+      const last = out[out.length - 1];
+      if (last && last.v === v && (v ? Math.abs(last.a.x - a.x) < 0.5 : Math.abs(last.a.y - a.y) < 0.5)) last.b = b;
+      else out.push({ a, b, v });
+    }
+    return { id: m[1]!, runs: out };
+  });
+  const found: string[] = [];
+  for (let i = 0; i < runs.length; i++)
+    for (let j = i + 1; j < runs.length; j++)
+      runs[i]!.runs.forEach((r, a) =>
+        runs[j]!.runs.forEach((q, b) => {
+          const inner = (a > 0 && a < runs[i]!.runs.length - 1) || (b > 0 && b < runs[j]!.runs.length - 1);
+          if (!inner || r.v !== q.v) return;
+          const d = r.v ? Math.abs(r.a.x - q.a.x) : Math.abs(r.a.y - q.a.y);
+          if (d < 0.5 || d >= 6) return;
+          const p = r.v ? 'y' : 'x';
+          const lo = Math.max(Math.min(r.a[p], r.b[p]), Math.min(q.a[p], q.b[p]));
+          const hi = Math.min(Math.max(r.a[p], r.b[p]), Math.max(q.a[p], q.b[p]));
+          if (hi - lo > 1) found.push(`${runs[i]!.id}/${runs[j]!.id}: ${d.toFixed(1)} px`);
+        }),
+      );
+  return found;
+}
+type Point2 = { x: number; y: number };
+
 /** Small steps in lines: a short (< 15 px) turn between two parallel runs. There should be none. */
 function bumps(svg: string): string[] {
   const found: string[] = [];
@@ -749,8 +786,9 @@ describe('Mermaid v13 integration', () => {
         expect(svg.match(/class="stream signal"/g)).toHaveLength(2);
         expect(svg.match(/class="stream connection"/g)).toHaveLength(4);
       }
-      // No two different lines drawn on top of each other, and no small steps in any line.
+      // No two different lines drawn on top of each other or just beside, and no small steps in any line.
       expect(overlappingLines(svg), file).toEqual([]);
+      expect(nearLines(svg), file).toEqual([]);
       expect(bumps(svg), file).toEqual([]);
       if (read(file).includes(': tee')) {
         // Tee dots mark where the lines actually join, never a straight run.
@@ -766,17 +804,6 @@ describe('Mermaid v13 integration', () => {
         expect(psvLines).toHaveLength(2);
         expect(psvLines.join('')).not.toContain('stream-blocked');
         expect(svg).toMatch(/class="equipment valve state-closed"/);
-      }
-      // No two different lines drawn on top of each other, and no small steps in any line.
-      expect(overlappingLines(svg), file).toEqual([]);
-      expect(bumps(svg), file).toEqual([]);
-      if (read(file).includes(': tee')) {
-        // Tee dots mark where the lines actually join, never a straight run.
-        const { dots, off } = dotsOnJunctions(svg);
-        expect(dots, file).toBeGreaterThan(0);
-        expect(off, file).toEqual([]);
-        // …and the tee's lines start or end at the dot, so a line's colour changes there.
-        expect(staleTeeEnds(svg), file).toEqual([]);
       }
       if (file === 'valve-types.mmd') {
         // Three motors: MV-8, V3-9, and the M glyph is drawn as a path inside each circle.
