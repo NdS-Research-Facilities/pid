@@ -9,7 +9,7 @@ import type { HomeAssistant, MermaidTheme, PidCardConfig } from './types.js';
 import { extractReferencedEntities, renderTemplate } from './vendor/template-renderer.js';
 
 export const CARD_TYPE = 'pid-card';
-export const CARD_VERSION = '0.8.0';
+export const CARD_VERSION = '0.9.0';
 
 type Mermaid = ReturnType<typeof createMermaid>;
 
