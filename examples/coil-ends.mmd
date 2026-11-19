@@ -1,0 +1,18 @@
+pid LR
+  title Temperatures at both ends of a coil
+  %% coil TAG … [in "Text"] [out "Text"]: describe its ends
+  %% TAG.coil1.in, TAG.coil1.out: reach one end, whichever way the line is written
+  SC-1: collector "Solar collector"
+  gradient SC-1 68 °C, 50 °C
+  P-1: pump "Solar pump" = on
+  R-1: product "Solar return"
+  T-1: tank "Buffer"
+  coil T-1 bottom "Solar coil" in "Solar flow" out "Solar return"
+  gradient T-1 62 °C, 50 °C, 34 °C
+  TT-1: instrument "Coil in" = 66 °C
+  TT-2: instrument "Coil out" = 41 °C
+
+  SC-1 --> P-1 --> T-1.coil1
+  T-1.coil1 --> R-1
+  TT-1 --- T-1.coil1.in
+  T-1.coil1.out --- TT-2

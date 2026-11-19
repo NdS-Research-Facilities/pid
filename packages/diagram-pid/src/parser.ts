@@ -15,6 +15,7 @@ import {
   type PidModel,
   type Port,
   type GradientStop,
+  type CoilEnd,
   type NozzleSide,
   type Level,
   type StreamProperty,
@@ -54,8 +55,8 @@ const NOZZLE = /^nozzle\s+([A-Za-z][\w.-]*)\s+([A-Za-z][\w-]*)\s+(left|right|top
 /** Equipment that has its own connection points, so takes no nozzles. */
 const NO_NOZZLES = new Set(['tee', 'valve', 'valve3']);
 const SIZE = /^size\s+([A-Za-z][\w.-]*)\s+(\d+(?:\.\d+)?)$/;
-/** `coil TAG top|middle|bottom|@NN% [inlet wall [outlet wall]] ["Name"]` */
-const COIL = /^coil\s+([A-Za-z][\w.-]*)\s+(top|middle|bottom|@\s*\d+(?:\.\d+)?\s*%)(?:\s+(left|right))?(?:\s+(left|right))?(?:\s+"([^"]*)")?$/;
+/** `coil TAG top|middle|bottom|@NN% [inlet wall [outlet wall]] ["Name"] [in "Text"] [out "Text"]` */
+const COIL = /^coil\s+([A-Za-z][\w.-]*)\s+(top|middle|bottom|@\s*\d+(?:\.\d+)?\s*%)(?:\s+(left|right))?(?:\s+(left|right))?(?:\s+"([^"]*)")?(?:\s+in\s+"([^"]*)")?(?:\s+out\s+"([^"]*)")?$/;
 const COIL_AT: Record<string, number> = { top: 0.8, middle: 0.5, bottom: 0.2 };
 /** Equipment a coil can go in. */
 export const COILABLE = new Set(['tank', 'vessel', 'drum', 'column', 'reactor']);
@@ -184,6 +185,8 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
         ...(m[3] ? { side: m[3] as 'left' | 'right' } : {}),
         ...(m[4] ? { sideOut: m[4] as 'left' | 'right' } : {}),
         ...(m[5] !== undefined ? { name: decodeEntities(m[5]) } : {}),
+        ...(m[6] ? { labelIn: decodeEntities(m[6]) } : {}),
+        ...(m[7] ? { labelOut: decodeEntities(m[7]) } : {}),
       });
       coilLines.push({ id: m[1]!, start, end });
       continue;
@@ -274,7 +277,7 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
 
   model.streams.forEach((s, i) => {
     const { start, end } = ranges[i]!;
-    const resolve = (ref: string): [string, Port | undefined, number | undefined, string?] => {
+    const resolve = (ref: string): [string, Port | undefined, number | undefined, string?, CoilEnd?] => {
       const m = /^(.+)\.([ABC])$/.exec(ref);
       if (m && byId.get(m[1]!)?.type === 'valve3') return [m[1]!, m[2] as Port, undefined];
       const n = /^(.+)\.([A-Za-z][\w-]*)$/.exec(ref);
@@ -283,23 +286,31 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
         error(`${n[1]} has no nozzle "${n[2]}"`, start, end);
         return [n[1]!, undefined, undefined];
       }
-      const c = /^(.+)\.coil(\d+)$/.exec(ref);
+      const c = /^(.+)\.coil(\d+)(?:\.(in|out))?$/.exec(ref);
       if (c && byId.get(c[1]!)?.coils) {
         const n = Number(c[2]);
         const coils = byId.get(c[1]!)!.coils!;
-        if (n >= 1 && n <= coils.length) return [c[1]!, undefined, n - 1];
+        if (n >= 1 && n <= coils.length) return [c[1]!, undefined, n - 1, undefined, c[3] as CoilEnd | undefined];
         error(`${c[1]} has ${coils.length} coil${coils.length === 1 ? '' : 's'}: there is no coil${n}`, start, end);
         return [c[1]!, undefined, undefined];
+      }
+      const bad = /^(.+)\.(coil\d+)\.(.+)$/.exec(ref);
+      if (bad && byId.get(bad[1]!)?.coils) {
+        error(`${bad[1]}.${bad[2]} has two ends, in and out: there is no "${bad[3]}"`, start, end);
+        return [bad[1]!, undefined, undefined];
       }
       return [touch(ref, start, end).id, undefined, undefined];
     };
     let coil: number | undefined;
     let nozzle: string | undefined;
-    [s.source, s.sourcePort, coil, nozzle] = resolve(s.source);
+    let coilEnd: CoilEnd | undefined;
+    [s.source, s.sourcePort, coil, nozzle, coilEnd] = resolve(s.source);
     if (coil !== undefined) s.sourceCoil = coil;
+    if (coilEnd) s.sourceCoilEnd = coilEnd;
     if (nozzle !== undefined) s.sourceNozzle = nozzle;
-    [s.target, s.targetPort, coil, nozzle] = resolve(s.target);
+    [s.target, s.targetPort, coil, nozzle, coilEnd] = resolve(s.target);
     if (coil !== undefined) s.targetCoil = coil;
+    if (coilEnd) s.targetCoilEnd = coilEnd;
     if (nozzle !== undefined) s.targetNozzle = nozzle;
     const target = byId.get(s.target);
     const drivable = target?.type === 'valve3' || (target?.type === 'valve' && target.valveKind !== 'relief');

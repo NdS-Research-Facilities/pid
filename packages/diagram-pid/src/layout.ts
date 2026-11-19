@@ -1,7 +1,7 @@
 import type { RenderContext } from '@mermaid-js/core';
 import type { Dir, LayoutEdge, LayoutModel, LayoutNode, Side } from '@mermaid-js/core/layout';
 import { layoutLabel, Style, type FontKey, type MeasuredLabel } from '@mermaid-js/core/text';
-import type { Equipment, NozzleSide, PidModel, Port, Stream } from './model.js';
+import { coilEnd, type CoilEnd, type Equipment, type NozzleSide, type PidModel, type Port, type Stream } from './model.js';
 import { equipmentStateText, instrumentText } from './state.js';
 import { coilShape, scaleOf, splitTag, symbolFor } from './symbols.js';
 
@@ -49,7 +49,7 @@ export interface NodePlacement {
   mirror?: boolean;
   /** Room beyond the symbol for nozzle stubs and descriptions, either side, across and down. */
   margin: { x: number; y: number };
-  /** Nozzle descriptions, measured, by nozzle id. */
+  /** Nozzle descriptions, measured, by nozzle id (and coil end descriptions, by `coilLabelKey`). */
   nozzleLabels: Map<string, MeasuredLabel>;
   /** An image or icon drawn inside a larger outline, to carry its nozzles. */
   framed?: boolean;
@@ -161,7 +161,7 @@ function alignTees(
       const sideOut = coilSides.get(coilKey(id, coil, 'out')) ?? sideIn;
       const shape = coilShape(eq.type, eq.coils[coil], sideIn, sideOut, coilInletLow.has(`${id}#${coil}`));
       if (!shape) return undefined;
-      const local = atSource ? shape.outlet : shape.inlet;
+      const local = coilEnd(s, atSource) === 'out' ? shape.outlet : shape.inlet;
       return pick({ x: node.x - place.width / 2 + local.x * place.scale, y: node.y - place.height / 2 + local.y * place.scale });
     }
     if ((atSource ? s.sourcePort : s.targetPort) === 'C') return undefined;
@@ -228,6 +228,9 @@ export function actuatorSide(dir: Dir): Side {
 
 const OPPOSITE_SIDE: Record<Side, Side> = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' };
 
+/** A coil end's description in `NodePlacement.nozzleLabels`; a dot keeps it apart from nozzle ids. */
+export const coilLabelKey = (i: number, end: CoilEnd) => `coil${i + 1}.${end}`;
+
 /** A coil nozzle's key in `PidLayout.coilSides`. */
 export const coilKey = (id: string, i: number, end: 'in' | 'out') => `${id}#${i}#${end}`;
 
@@ -252,11 +255,11 @@ export function endSides(
     const rest = endSides(dir, { ...s, sourceNozzle: undefined, targetNozzle: undefined }, byId, mirrored, coilSides);
     return { source: srcNozzle ?? rest.source, target: tgtNozzle ?? rest.target };
   }
-  const coil = (id: string, i: number | undefined, end: 'in' | 'out') =>
+  const coil = (id: string, i: number | undefined, end: CoilEnd) =>
     i === undefined ? undefined : (coilSides.get(coilKey(id, i, end)) ?? byId.get(id)?.coils?.[i]?.side);
-  // A line leaves a coil by its outlet and reaches it by its inlet.
-  const sourceCoil = coil(s.source, s.sourceCoil, 'out');
-  const targetCoil = coil(s.target, s.targetCoil, 'in');
+  // A line leaves a coil by its outlet and reaches it by its inlet, unless it names the end.
+  const sourceCoil = coil(s.source, s.sourceCoil, coilEnd(s, true));
+  const targetCoil = coil(s.target, s.targetCoil, coilEnd(s, false));
   if (sourceCoil || targetCoil || s.sourceCoil !== undefined || s.targetCoil !== undefined) {
     const rest = endSides(dir, { ...s, sourceCoil: undefined, targetCoil: undefined }, byId, mirrored);
     return { source: s.sourceCoil !== undefined ? sourceCoil : rest.source, target: s.targetCoil !== undefined ? targetCoil : rest.target };
@@ -385,9 +388,15 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
     // Room beyond the symbol for each nozzle's stub and its description, mirrored either side.
     const nozzleLabels = new Map<string, MeasuredLabel>();
     for (const z of nozzles) if (z.label) nozzleLabels.set(z.id, measure(z.label, { ...small, size: size - 3 }));
+    // A coil's ends are described the same way, outside the wall they are on (`coil1.in`).
+    eq.coils?.forEach((c, i) => {
+      if (c.labelIn) nozzleLabels.set(coilLabelKey(i, 'in'), measure(c.labelIn, { ...small, size: size - 3 }));
+      if (c.labelOut) nozzleLabels.set(coilLabelKey(i, 'out'), measure(c.labelOut, { ...small, size: size - 3 }));
+    });
     const room = (sides: string[]) =>
       Math.max(0, ...nozzles.filter((z) => sides.includes(z.side)).map((z) => NOZZLE_STUB + (nozzleLabels.get(z.id)?.width ?? 0) + 4));
-    const margin = { x: room(['left', 'right']), y: room(['top', 'bottom']) };
+    const coilRoom = Math.max(0, ...[...nozzleLabels].filter(([k]) => k.startsWith('coil')).map(([, l]) => l.width + 6));
+    const margin = { x: Math.max(room(['left', 'right']), coilRoom), y: room(['top', 'bottom']) };
     const side = labelSide(model.direction, eq);
     placements.set(eq.id, { labels, side, width: w, height: h, turn, scale: f, margin, nozzleLabels, ...(framed ? { framed } : {}) });
     // The symbol sits in the middle of the box, so streams attach at its centre line; the space
@@ -432,16 +441,38 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
     return edge;
   });
 
-  const run = () =>
-    ctx.layout({
+  // A line written against a coil end (`T-1.coil1.in --- TT-1`, `TT-2 --- T-1.coil1.out`) is laid
+  // out turned around, so what hangs on the inlet comes before the vessel and what hangs on the
+  // outlet after it, as for the process lines. Its route is turned back afterwards.
+  const flipped = new Set(model.streams.filter((s) => s.sourceCoilEnd === 'in' || s.targetCoilEnd === 'out').map((s) => s.id));
+  const forLayout = (e: LayoutEdge): LayoutEdge => {
+    if (!flipped.has(e.id)) return e;
+    const { endMarker, startMarker, sides, ...rest } = e;
+    return {
+      ...rest,
+      source: e.target,
+      target: e.source,
+      ...(endMarker ? { startMarker: endMarker } : {}),
+      ...(startMarker ? { endMarker: startMarker } : {}),
+      ...(sides ? { sides: { source: sides.target, target: sides.source } } : {}),
+    };
+  };
+  const run = () => {
+    const out = ctx.layout({
       direction: model.direction,
       nodes,
-      edges,
+      edges: edges.map(forLayout),
       groups: [],
       spacing: { node: 50, rank: 70, edge: 20 },
       routing: 'stepped',
       diagramPadding: 12,
     });
+    for (const id of flipped) {
+      const e = out.edges.get(id);
+      if (e?.points) out.edges.set(id, { ...e, points: [...e.points].reverse() });
+    }
+    return out;
+  };
   let laid = run();
 
   // The layout orders nodes without regard to which side a branch must leave by, so a branch
@@ -470,21 +501,26 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
   for (const eq of model.equipment) {
     const node = laid.nodes.get(eq.id);
     eq.coils?.forEach((coil, i) => {
-      const otherY = (end: 'in' | 'out') => {
-        const ys = model.streams.flatMap((s) => {
-          if (end === 'out' && s.source === eq.id && s.sourceCoil === i) return [laid.nodes.get(s.target)?.y ?? NaN];
-          if (end === 'in' && s.target === eq.id && s.targetCoil === i) return [laid.nodes.get(s.source)?.y ?? NaN];
+      // The lines at one end of the coil, each with the end of it away from the coil. Process lines
+      // and cables decide; an instrument or signal line only when the end has nothing else.
+      const linesAt = (end: CoilEnd) => {
+        const all = model.streams.flatMap((s) => {
+          if (s.source === eq.id && s.sourceCoil === i && coilEnd(s, true) === end) return [{ s, far: s.target, atSource: true }];
+          if (s.target === eq.id && s.targetCoil === i && coilEnd(s, false) === end) return [{ s, far: s.source, atSource: false }];
           return [];
-        }).filter((y) => !Number.isNaN(y));
+        });
+        const main = all.filter((l) => l.s.kind === 'process' || l.s.kind === 'electric');
+        return main.length ? main : all;
+      };
+      const otherY = (end: CoilEnd) => {
+        const ys = linesAt(end).map((l) => laid.nodes.get(l.far)?.y ?? NaN).filter((y) => !Number.isNaN(y));
         return ys.length ? ys.reduce((a, b) => a + b, 0) / ys.length : undefined;
       };
-      const sideOf = (end: 'in' | 'out') => {
-        const ends = model.streams.flatMap((s) => {
-          const pts = laid.edges.get(s.id)?.points;
+      const sideOf = (end: CoilEnd) => {
+        const ends = linesAt(end).flatMap((l) => {
+          const pts = laid.edges.get(l.s.id)?.points;
           if (!pts?.length) return [];
-          if (end === 'out' && s.source === eq.id && s.sourceCoil === i) return [pts[pts.length - 1]!];
-          if (end === 'in' && s.target === eq.id && s.targetCoil === i) return [pts[0]!];
-          return [];
+          return [l.atSource ? pts[pts.length - 1]! : pts[0]!];
         });
         if (!node || !ends.length) return undefined;
         return ends.reduce((sum, p) => sum + p.x - node.x, 0) / ends.length > 0 ? ('right' as const) : ('left' as const);

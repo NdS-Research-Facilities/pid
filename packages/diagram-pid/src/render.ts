@@ -20,8 +20,8 @@ import {
 import type { MeasuredLabel } from '@mermaid-js/core/text';
 import type { LayoutModelNode, Side } from '@mermaid-js/core/layout';
 import { hopPaths } from '@mermaid-js/core/layout/hops';
-import { ARROW, coilKey, drawsArrow, endSides, LABEL_GAP, LINE_NUMBER_GAP, nozzlePoints, type NodePlacement, type PidLayout } from './layout.js';
-import { PORTS, type Equipment, type EquipmentType, type PidModel, type Port, type Stream } from './model.js';
+import { ARROW, coilKey, coilLabelKey, drawsArrow, endSides, LABEL_GAP, LINE_NUMBER_GAP, nozzlePoints, type NodePlacement, type PidLayout } from './layout.js';
+import { coilEnd, PORTS, type CoilEnd, type Equipment, type EquipmentType, type PidModel, type Port, type Stream } from './model.js';
 import { boreProblem, breakerClosed, connectedPorts, portOpen } from './state.js';
 import { coilShape, interiorOf, symbolFor, VALVE3_ACTUATOR_DROP, type Interior, type SymbolDef, type SymbolPart } from './symbols.js';
 
@@ -78,10 +78,10 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     if (!edge || edge.points.length < 2) return [];
     const pts = edge.points.map((p) => ({ x: p.x, y: p.y }));
     const sides = endSides(model.direction, s, byId, mirrored, layout.coilSides);
-    const fixedAt = (id: string, nozzle: string | undefined, coil: number | undefined, end: 'inlet' | 'outlet') =>
-      nozzleAt(layout, byId.get(id), nozzle) ?? coilNozzle(layout, byId.get(id), coil, end);
-    const srcFixed = fixedAt(s.source, s.sourceNozzle, s.sourceCoil, 'outlet');
-    const tgtFixed = fixedAt(s.target, s.targetNozzle, s.targetCoil, 'inlet');
+    const fixedAt = (id: string, nozzle: string | undefined, coil: number | undefined, end: CoilEnd) =>
+      nozzleAt(layout, byId.get(id), nozzle) ?? coilNozzle(layout, byId.get(id), coil, end === 'out' ? 'outlet' : 'inlet');
+    const srcFixed = fixedAt(s.source, s.sourceNozzle, s.sourceCoil, coilEnd(s, true));
+    const tgtFixed = fixedAt(s.target, s.targetNozzle, s.targetCoil, coilEnd(s, false));
     // An end is free when nothing pins where the line meets it: then a straight line can move to
     // suit the other end, rather than step.
     const free = (id: string, fixed: Point | undefined, side: Side | undefined, slot: number | undefined) =>
@@ -109,6 +109,7 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     // line's colour would change instead).
     if (found.length) joinAtDots(routes.filter((r) => r.s.source === eq.id || r.s.target === eq.id), eq.id, found);
   }
+  for (const [id, dots] of tapsAtSharedEnds(routes, byId)) teeDots.set(id, [...(teeDots.get(id) ?? []), ...dots]);
   const hopped = hopPaths(
     routes.map((r) => r.d),
     'arc',
@@ -215,6 +216,7 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     w.close();
     fillMarks?.();
     if (eq.nozzles?.length) drawNozzles(w, eq, place, node, styled, layout.fontSize - 3);
+    if (eq.coils?.some((c) => c.labelIn || c.labelOut)) drawCoilLabels(w, eq, layout, place, styled, layout.fontSize - 3);
     for (const p of teeDots.get(eq.id) ?? []) w.leaf('circle', { class: 'tee-dot', cx: r(p.x), cy: r(p.y), r: 3.5, fill: styled.paint.border, stroke: 'none' });
     if (place.labels.bubble) drawBubble(w, place.labels.bubble, node, styled.text);
     drawLabels(w, layout, node, place, styled.text);
@@ -664,6 +666,29 @@ function drawCoils(w: SvgWriter, eq: Equipment, layout: PidLayout, paint: Paint,
   });
 }
 
+/**
+ * The descriptions of a coil's ends, in small text outside the wall, as a nozzle's: above its line,
+ * or below it for the lower of two ends on one wall, so the two stay apart.
+ */
+function drawCoilLabels(w: SvgWriter, eq: Equipment, layout: PidLayout, place: NodePlacement, styled: Styled, fontSize: number): void {
+  w.open('g', { class: 'coil-labels' });
+  eq.coils?.forEach((_, i) => {
+    const inlet = coilNozzle(layout, eq, i, 'inlet');
+    const outlet = coilNozzle(layout, eq, i, 'outlet');
+    if (!inlet || !outlet) return;
+    const oneWall = coilSide(layout, eq, i, 'in') === coilSide(layout, eq, i, 'out');
+    for (const [end, p, other] of [['in', inlet, outlet], ['out', outlet, inlet]] as const) {
+      const label = place.nozzleLabels.get(coilLabelKey(i, end));
+      if (!label) continue;
+      const sign = coilSide(layout, eq, i, end) === 'right' ? 1 : -1;
+      const below = oneWall && p.y > other.y;
+      const y = below ? p.y + label.height / 2 + 1 : p.y - label.height / 2 - 1;
+      w.label(label, p.x + sign * (3 + label.width / 2), y, { ...styled.text, class: `coil-label coil${i + 1}-${end}`, 'font-size': fontSize });
+    }
+  });
+  w.close();
+}
+
 /** The wall a coil's inlet or outlet nozzle is on. */
 function coilSide(layout: PidLayout, eq: Equipment, i: number, end: 'in' | 'out'): 'left' | 'right' {
   return layout.coilSides.get(coilKey(eq.id, i, end)) ?? eq.coils?.[i]?.side ?? 'left';
@@ -740,6 +765,55 @@ function joinAtDots(routes: { s: Stream; drawn: Point[]; d: PathData }[], tee: s
     r.drawn = r.s.source === tee ? drawn : drawn.reverse();
     r.d = polyline(r.drawn);
   });
+}
+
+/**
+ * Several lines at one coil end or named nozzle (a pipe and the instrument on it, or a pipe that
+ * branches) would run on top of each other into it. The first process line (or cable) carries the
+ * pipe; every other line there stops where it leaves that pipe, at a junction dot, as at a tee.
+ * Returns the dots, by the equipment they are on.
+ */
+function tapsAtSharedEnds(routes: { s: Stream; drawn: Point[]; d: PathData }[], byId: ReadonlyMap<string, Equipment>): Map<string, Point[]> {
+  const groups = new Map<string, { r: (typeof routes)[number]; atSource: boolean }[]>();
+  for (const r of routes) {
+    for (const atSource of [true, false]) {
+      const id = atSource ? r.s.source : r.s.target;
+      const nozzle = atSource ? r.s.sourceNozzle : r.s.targetNozzle;
+      const coil = atSource ? r.s.sourceCoil : r.s.targetCoil;
+      if (!byId.has(id) || (nozzle === undefined && coil === undefined)) continue;
+      const key = nozzle !== undefined ? `${id}\n${nozzle}` : `${id}\n#${coil}#${coilEnd(r.s, atSource)}`;
+      groups.set(key, [...(groups.get(key) ?? []), { r, atSource }]);
+    }
+  }
+  const dots = new Map<string, Point[]>();
+  const onPath = (p: Point, path: readonly Point[]) => path.some((a, k) => k + 1 < path.length && toSegment(p, a, path[k + 1]!) < 0.5);
+  for (const [key, lines] of groups) {
+    if (lines.length < 2) continue;
+    const main = lines.find((l) => l.r.s.kind === 'process' || l.r.s.kind === 'electric') ?? lines[0]!;
+    const outward = (l: (typeof lines)[number]) => (l.atSource ? l.r.drawn : [...l.r.drawn].reverse());
+    const trunk = outward(main);
+    for (const l of lines) {
+      if (l === main) continue;
+      const out = outward(l);
+      // Follow the line out while it is still on the pipe; it leaves at the last pipe point on the
+      // segment where it turns away (a pipe bend, or where it started the segment).
+      let k = 1;
+      while (k < out.length && onPath(out[k]!, trunk) && onPath({ x: (out[k - 1]!.x + out[k]!.x) / 2, y: (out[k - 1]!.y + out[k]!.y) / 2 }, trunk)) k++;
+      if (k >= out.length) continue;
+      const a = out[k - 1]!;
+      const b = out[k]!;
+      const leave = [a, ...trunk.filter((t) => toSegment(t, a, b) < 0.5)].sort((p, q) => Math.hypot(q.x - a.x, q.y - a.y) - Math.hypot(p.x - a.x, p.y - a.y))[0]!;
+      if (Math.hypot(leave.x - out[0]!.x, leave.y - out[0]!.y) < 1) continue;
+      const cut = dedupe([{ x: leave.x, y: leave.y }, ...out.slice(k)]);
+      l.r.drawn = l.atSource ? cut : cut.reverse();
+      l.r.d = polyline(l.r.drawn);
+      const id = key.split('\n')[0]!;
+      const list = dots.get(id) ?? [];
+      if (!list.some((d) => Math.abs(d.x - leave.x) < 1 && Math.abs(d.y - leave.y) < 1)) list.push({ x: leave.x, y: leave.y });
+      dots.set(id, list);
+    }
+  }
+  return dots;
 }
 
 /**

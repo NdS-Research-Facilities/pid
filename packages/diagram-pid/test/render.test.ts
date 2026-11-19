@@ -280,6 +280,59 @@ describe('coil walls', () => {
   });
 });
 
+describe('coil ends', () => {
+  const end = (s: { source: string; sourceCoil?: number; sourceCoilEnd?: string; target: string; targetCoil?: number; targetCoilEnd?: string }) =>
+    `${s.source}${s.sourceCoil !== undefined ? `.coil${s.sourceCoil + 1}` : ''}${s.sourceCoilEnd ? `.${s.sourceCoilEnd}` : ''}>` +
+    `${s.target}${s.targetCoil !== undefined ? `.coil${s.targetCoil + 1}` : ''}${s.targetCoilEnd ? `.${s.targetCoilEnd}` : ''}`;
+
+  it('reads end descriptions, and lines to a named end either way round', () => {
+    const { model, diagnostics } = parsePid(read('coil-ends.mmd'));
+    expect(diagnostics).toEqual([]);
+    expect(model.equipment.find((e) => e.id === 'T-1')!.coils).toEqual([
+      { height: 0.2, name: 'Solar coil', labelIn: 'Solar flow', labelOut: 'Solar return' },
+    ]);
+    expect(model.streams.map(end)).toEqual(['SC-1>P-1', 'P-1>T-1.coil1', 'T-1.coil1>R-1', 'TT-1>T-1.coil1.in', 'T-1.coil1.out>TT-2']);
+    expect(model.equipment.some((e) => e.id.includes('.coil'))).toBe(false);
+  });
+
+  it('works out the end of a line without one: out of the outlet, into the inlet', async () => {
+    const { coilEnd } = await import('../src/model.js');
+    const { model } = parsePid('pid\n  T: tank\n  coil T bottom\n  A --> T.coil1\n  T.coil1 --> B\n  T.coil1.in --- C\n  D --- T.coil1.out\n');
+    expect(model.streams.map((s) => [coilEnd(s, true), coilEnd(s, false)])).toEqual([
+      ['out', 'in'], ['out', 'in'], ['in', 'in'], ['out', 'out'],
+    ]);
+  });
+
+  it('reports an end that is not in or out', () => {
+    const msgs = parsePid('pid\n  T: tank\n  coil T bottom\n  T.coil1.mid --- X\n').diagnostics.map((d) => d.message);
+    expect(msgs).toEqual([expect.stringContaining('T.coil1 has two ends, in and out: there is no "mid"')]);
+  });
+
+  it('puts what hangs on the inlet before the vessel and on the outlet after it, tapping the pipe at a dot', async () => {
+    const mermaid = createMermaid();
+    await mermaid.registerExternalDiagrams([pid]);
+    const { svg } = await mermaid.render('ce', read('coil-ends.mmd'));
+    const x = (id: string) => Number(new RegExp(`data-id="node-${id}"><g transform="translate\\((-?[\\d.]+)`).exec(svg)?.[1]);
+    expect(x('TT-1')).toBeLessThan(x('T-1'));
+    expect(x('TT-2')).toBeGreaterThan(x('T-1'));
+    expect(svg.match(/class="coil-label coil1-(in|out)"/g)).toHaveLength(2);
+    expect(svg).toContain('Solar flow');
+    // Each thermometer line stops on its pipe, at a dot, rather than running along it.
+    expect(svg.match(/class="tee-dot"/g)).toHaveLength(2);
+    expect(overlappingLines(svg)).toEqual([]);
+    const { off } = dotsOnJunctions(svg);
+    expect(off).toEqual([]);
+  });
+
+  it('taps a second line at a named nozzle off the first in the same way', async () => {
+    const mermaid = createMermaid();
+    await mermaid.registerExternalDiagrams([pid]);
+    const { svg } = await mermaid.render('nt', 'pid LR\n  CV: block\n  nozzle CV n1 right "Flow"\n  TT-1: instrument\n  CV.n1 --> D\n  CV.n1 --- TT-1\n');
+    expect(svg.match(/class="tee-dot"/g)).toHaveLength(1);
+    expect(overlappingLines(svg)).toEqual([]);
+  });
+});
+
 describe('nozzles', () => {
   const src = `pid LR
   CV: block "Central heating"

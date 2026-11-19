@@ -66,6 +66,7 @@ option (actions, icon packs, image base, theme).
 | `A ==> B`, `A === B` | Electrical power cable (orange), with or without arrow (direction of power) |
 | `A f1@--> B` | A named line (any line kind), for `class`, `style`, `linkStyle` and `pipe` |
 | `nozzle TAG id side "Text"`, `TAG.id` | A named connection point on equipment, and a line to it |
+| `coil TAG where … in "Text" out "Text"`, `TAG.coil1.in` | A coil in a vessel, its ends described, and a line to one end |
 | `stream 1 { T: 25 °C, F: 1200 kg/h }` | Property table shown with stream `1` |
 | `%% comment` | Comment |
 
@@ -209,6 +210,30 @@ their size.
 
 [`examples/coils.mmd`](examples/coils.mmd) has this example.
 
+#### Coil ends
+
+Like a nozzle, each end of a coil can be described and reached by name, so an instrument (a
+temperature probe on the flow and the return, say) goes on the end you mean:
+
+```
+coil T-1 bottom "Solar coil" in "Solar flow" out "Solar return"
+P-1 --> T-1.coil1                       %% the process lines, as before
+T-1.coil1 --> R-1
+TT-1 --- T-1.coil1.in                   %% on the inlet…
+T-1.coil1.out --- TT-2                  %% …and on the outlet, whichever way the line is written
+```
+
+- `TAG.coil1.in` and `TAG.coil1.out` name an end; plain `TAG.coil1` still means the outlet for a
+  line leaving it and the inlet for a line reaching it.
+- What hangs on the inlet is placed before the vessel, and what hangs on the outlet after it.
+- `in "Text"` and `out "Text"` are drawn in small text outside the wall, as nozzle descriptions.
+- An instrument line joins the pipe where it meets it, at a junction dot, rather than running
+  along it into the coil. The same goes for a second line on a named nozzle.
+
+![Temperature probes on both ends of a coil](docs/images/coil-ends.png)
+
+[`examples/coil-ends.mmd`](examples/coil-ends.mmd) has this example.
+
 ### Nozzles
 
 Named connection points on any equipment (not tees and valves, which have their own), so the
@@ -230,6 +255,8 @@ C-3 --> CV.n2                           %% …or to one
 - A symbol grows when a side has more nozzles than fit; an image or icon keeps its size and is
   drawn inside an outline that carries the nozzles.
 - Lines without a nozzle attach as before.
+- Several lines can share a nozzle (a pipe and the instrument on it): the first process line runs
+  into it, and the others join that pipe at a junction dot.
 
 ### Solar and electrical
 

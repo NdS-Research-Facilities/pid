@@ -131,7 +131,10 @@ export interface Nozzle {
   label?: string;
 }
 
-/** A heat exchanger coil inside a vessel. Lines reach it as `TAG.coil1`, `TAG.coil2`, … */
+/**
+ * A heat exchanger coil inside a vessel. Lines reach it as `TAG.coil1`, `TAG.coil2`, … (out of its
+ * outlet, into its inlet), or at a chosen end as `TAG.coil1.in`, `TAG.coil1.out`.
+ */
 export interface Coil {
   /** Height of its middle from the bottom, 0 … 1: top 0.8, middle 0.5, bottom 0.2, or `@NN%`. */
   height: number;
@@ -141,6 +144,17 @@ export interface Coil {
   sideOut?: 'left' | 'right';
   /** Shown as a tooltip. */
   name?: string;
+  /** Descriptions of its inlet and outlet, drawn beside them like a nozzle's: `in "Solar flow"`. */
+  labelIn?: string;
+  labelOut?: string;
+}
+
+/** A coil's two ends: `TAG.coil1.in`, `TAG.coil1.out`. */
+export type CoilEnd = 'in' | 'out';
+
+/** The coil end line `s` meets at its source or target: as written, else out of its outlet and into its inlet. */
+export function coilEnd(s: Stream, atSource: boolean): CoilEnd {
+  return (atSource ? s.sourceCoilEnd : s.targetCoilEnd) ?? (atSource ? 'out' : 'in');
 }
 
 export interface Level {
@@ -164,6 +178,9 @@ export interface Stream {
   /** A coil inside the source or target vessel (0 = `coil1`): out of its outlet, into its inlet. */
   sourceCoil?: number;
   targetCoil?: number;
+  /** The coil end, when written (`T-1.coil1.in`); see `coilEnd`. */
+  sourceCoilEnd?: CoilEnd;
+  targetCoilEnd?: CoilEnd;
   /** A named nozzle on the source or target (`CV.n1`). */
   sourceNozzle?: string;
   targetNozzle?: string;
