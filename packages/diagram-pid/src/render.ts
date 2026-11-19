@@ -21,7 +21,7 @@ import type { MeasuredLabel } from '@mermaid-js/core/text';
 import type { LayoutModelNode, Side } from '@mermaid-js/core/layout';
 import { hopPaths } from '@mermaid-js/core/layout/hops';
 import { ARROW, coilKey, coilLabelKey, drawsArrow, endSides, LABEL_GAP, LINE_NUMBER_GAP, nozzlePoints, type NodePlacement, type PidLayout } from './layout.js';
-import { coilEnd, PORTS, type CoilEnd, type Equipment, type EquipmentType, type PidModel, type Port, type Stream } from './model.js';
+import { coilEnd, PORTS, type CoilEnd, type Equipment, type EquipmentState, type EquipmentType, type PidModel, type Port, type Stream } from './model.js';
 import { boreProblem, breakerClosed, connectedPorts, portOpen } from './state.js';
 import { coilShape, interiorOf, symbolFor, VALVE3_ACTUATOR_DROP, type Interior, type SymbolDef, type SymbolPart } from './symbols.js';
 
@@ -216,7 +216,7 @@ export function renderPid(model: PidModel, layout: PidLayout, ctx: RenderContext
     w.close();
     fillMarks?.();
     if (eq.nozzles?.length) drawNozzles(w, eq, place, node, styled, layout.fontSize - 3);
-    if (eq.coils?.some((c) => c.labelIn || c.labelOut)) drawCoilLabels(w, eq, layout, place, styled, layout.fontSize - 3);
+    if (eq.coils?.some((c) => c.labelIn || c.labelOut || c.readingIn || c.readingOut)) drawCoilLabels(w, eq, layout, place, styled, layout.fontSize - 3);
     for (const p of teeDots.get(eq.id) ?? []) w.leaf('circle', { class: 'tee-dot', cx: r(p.x), cy: r(p.y), r: 3.5, fill: styled.paint.border, stroke: 'none' });
     if (place.labels.bubble) drawBubble(w, place.labels.bubble, node, styled.text);
     drawLabels(w, layout, node, place, styled.text);
@@ -621,22 +621,39 @@ function drawNozzles(w: SvgWriter, eq: Equipment, place: NodePlacement, node: Po
       w.close();
     }
     w.leaf('path', { d: pathBuilder().moveTo(r(p.edge.x), r(p.edge.y)).lineTo(r(p.outer.x), r(p.outer.y)).done(), fill: 'none', stroke: styled.paint.border, 'stroke-width': 2 });
-    const label = place.nozzleLabels.get(z.id);
-    if (label) {
-      const attrs = { ...styled.text, class: 'nozzle-label', 'font-size': fontSize };
+    // Its reading next to the line, its description beyond.
+    let off = place.readings.has(z.id) ? 3 : 1;
+    for (const [label, attrs] of noteStack(place, z.id, z.reading, styled, fontSize)) {
       if (z.side === 'left' || z.side === 'right') {
         const sign = z.side === 'right' ? 1 : -1;
-        w.label(label, p.outer.x + sign * (3 + label.width / 2), p.outer.y - label.height / 2 - 1, attrs);
+        w.label(label, p.outer.x + sign * (3 + label.width / 2), p.outer.y - off - label.height / 2, attrs);
       } else {
         const sign = z.side === 'bottom' ? 1 : -1;
-        w.open('g', { transform: transforms(translate(r(p.outer.x - label.height / 2 - 2), r(p.outer.y + sign * (3 + label.width / 2))), rotate(-90)) });
+        w.open('g', { transform: transforms(translate(r(p.outer.x - off - 1 - label.height / 2), r(p.outer.y + sign * (3 + label.width / 2))), rotate(-90)) });
         w.label(label, 0, 0, attrs);
         w.close();
       }
+      off += label.height;
     }
     w.close();
   }
   w.close();
+}
+
+/**
+ * What is written beside a nozzle or coil end, from the line outwards: its reading in bold (`?`
+ * when unavailable or unknown, as on an instrument), then its description.
+ */
+function noteStack(place: NodePlacement, key: string, reading: EquipmentState | undefined, styled: Styled, fontSize: number): [MeasuredLabel, Attrs][] {
+  const out: [MeasuredLabel, Attrs][] = [];
+  const value = place.readings.get(key);
+  if (value) {
+    const unknown = reading?.kind === 'unknown' ? ' reading-unknown' : '';
+    out.push([value, { ...styled.text, class: `reading${unknown}`, 'font-size': fontSize, 'font-weight': 'bold' }]);
+  }
+  const label = place.nozzleLabels.get(key);
+  if (label) out.push([label, { ...styled.text, class: 'nozzle-label', 'font-size': fontSize }]);
+  return out;
 }
 
 /** Where a line meets coil `i` of `eq`, in diagram coordinates: its inlet or outlet nozzle. */
@@ -667,8 +684,8 @@ function drawCoils(w: SvgWriter, eq: Equipment, layout: PidLayout, paint: Paint,
 }
 
 /**
- * The descriptions of a coil's ends, in small text outside the wall, as a nozzle's: above its line,
- * or below it for the lower of two ends on one wall, so the two stay apart.
+ * The descriptions and readings of a coil's ends, in small text outside the wall, as a nozzle's:
+ * above its line, or below it for the lower of two ends on one wall, so the two stay apart.
  */
 function drawCoilLabels(w: SvgWriter, eq: Equipment, layout: PidLayout, place: NodePlacement, styled: Styled, fontSize: number): void {
   w.open('g', { class: 'coil-labels' });
@@ -677,13 +694,17 @@ function drawCoilLabels(w: SvgWriter, eq: Equipment, layout: PidLayout, place: N
     const outlet = coilNozzle(layout, eq, i, 'outlet');
     if (!inlet || !outlet) return;
     const oneWall = coilSide(layout, eq, i, 'in') === coilSide(layout, eq, i, 'out');
+    const coil = eq.coils![i]!;
     for (const [end, p, other] of [['in', inlet, outlet], ['out', outlet, inlet]] as const) {
-      const label = place.nozzleLabels.get(coilLabelKey(i, end));
-      if (!label) continue;
       const sign = coilSide(layout, eq, i, end) === 'right' ? 1 : -1;
       const below = oneWall && p.y > other.y;
-      const y = below ? p.y + label.height / 2 + 1 : p.y - label.height / 2 - 1;
-      w.label(label, p.x + sign * (3 + label.width / 2), y, { ...styled.text, class: `coil-label coil${i + 1}-${end}`, 'font-size': fontSize });
+      let off = place.readings.has(coilLabelKey(i, end)) ? 3 : 1;
+      for (const [label, attrs] of noteStack(place, coilLabelKey(i, end), end === 'in' ? coil.readingIn : coil.readingOut, styled, fontSize)) {
+        const y = below ? p.y + off + label.height / 2 : p.y - off - label.height / 2;
+        const cls = `${attrs.class as string} coil-label coil${i + 1}-${end}`;
+        w.label(label, p.x + sign * (3 + label.width / 2), y, { ...attrs, class: cls });
+        off += label.height;
+      }
     }
   });
   w.close();

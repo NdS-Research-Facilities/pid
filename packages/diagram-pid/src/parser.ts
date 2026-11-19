@@ -101,6 +101,8 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
   const styling: { id: string; cls?: string; decls?: string[]; start: number; end: number }[] = [];
   const actuatorLines: { id: string; start: number; end: number }[] = [];
   const nozzleLines: { id: string; start: number; end: number }[] = [];
+  // `CV.n1 = 70 °C`, `T-1.coil1.in = 66 °C`: readings at a nozzle or coil end, once both are known.
+  const dotted: { id: string; raw: string; start: number; end: number }[] = [];
   const diagnostics: Diagnostic[] = [];
   const children: AstNode[] = [];
   const byId = new Map<string, Equipment>();
@@ -224,7 +226,8 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
     } else if ((m = STREAM_PROPS.exec(line))) {
       model.properties.set(decodeEntities(unquote(m[1]!)), parseProperties(m[2]!));
     } else if ((m = STATE.exec(line))) {
-      touch(m[1]!, start, end).state = parseState(decodeEntities(m[2]!));
+      if (m[1]!.includes('.')) dotted.push({ id: m[1]!, raw: decodeEntities(m[2]!), start, end });
+      else touch(m[1]!, start, end).state = parseState(decodeEntities(m[2]!));
     } else if (LINK.test(line)) {
       // split with three capture groups: [id, name, op, label, id, name, op, label, id, ...]
       const parts = line.split(LINK);
@@ -274,6 +277,27 @@ export function parsePid(text: string, ctx?: Pick<DiagramParseContext, 'preproce
     }
   }
   if (!sawHeader && diagnostics.length === 0) error('Expected "pid"', 0, text.length);
+
+  // A dotted tag set to a value is a reading at a nozzle or coil end; otherwise, as before, the
+  // state of equipment whose tag has a dot in it.
+  for (const d of dotted) {
+    // An empty reading (a template that chose nothing) shows nothing.
+    const reading = d.raw.trim() ? parseState(d.raw) : undefined;
+    const c = /^(.+)\.coil(\d+)(?:\.(.*))?$/.exec(d.id);
+    const n = /^(.+)\.([A-Za-z][\w-]*)$/.exec(d.id);
+    const coils = c ? byId.get(c[1]!)?.coils : undefined;
+    const nozzle = n ? byId.get(n[1]!)?.nozzles?.find((z) => z.id === n[2]) : undefined;
+    if (coils) {
+      const coil = coils[Number(c![2]) - 1];
+      const at = c![3];
+      if (!coil) error(`${c![1]} has ${coils.length} coil${coils.length === 1 ? '' : 's'}: there is no coil${c![2]}`, d.start, d.end);
+      else if (at === 'in') coil.readingIn = reading;
+      else if (at === 'out') coil.readingOut = reading;
+      else error(`${c![1]}.coil${c![2]} has two ends: a reading goes on ${c![1]}.coil${c![2]}.in or .out`, d.start, d.end);
+    } else if (nozzle) nozzle.reading = reading;
+    else if (n && byId.get(n[1]!)?.nozzles) error(`${n[1]} has no nozzle "${n[2]}"`, d.start, d.end);
+    else touch(d.id, d.start, d.end).state = parseState(d.raw);
+  }
 
   model.streams.forEach((s, i) => {
     const { start, end } = ranges[i]!;

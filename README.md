@@ -67,6 +67,7 @@ option (actions, icon packs, image base, theme).
 | `A f1@--> B` | A named line (any line kind), for `class`, `style`, `linkStyle` and `pipe` |
 | `nozzle TAG id side "Text"`, `TAG.id` | A named connection point on equipment, and a line to it |
 | `coil TAG where … in "Text" out "Text"`, `TAG.coil1.in` | A coil in a vessel, its ends described, and a line to one end |
+| `CV.n1 = 70 °C`, `TAG.coil1.in = 66 °C` | A reading at a nozzle or coil end, without an instrument |
 | `stream 1 { T: 25 °C, F: 1200 kg/h }` | Property table shown with stream `1` |
 | `%% comment` | Comment |
 
@@ -213,7 +214,8 @@ their size.
 #### Coil ends
 
 Like a nozzle, each end of a coil can be described and reached by name, so an instrument (a
-temperature probe on the flow and the return, say) goes on the end you mean:
+temperature probe on the flow and the return, say) goes on the end you mean, or its reading is
+shown right there:
 
 ```
 coil T-1 bottom "Solar coil" in "Solar flow" out "Solar return"
@@ -221,6 +223,10 @@ P-1 --> T-1.coil1                       %% the process lines, as before
 T-1.coil1 --> R-1
 TT-1 --- T-1.coil1.in                   %% on the inlet…
 T-1.coil1.out --- TT-2                  %% …and on the outlet, whichever way the line is written
+
+coil T-1 top "Hot water coil" in "DHW in" out "DHW out"
+T-1.coil2.in = 12 °C                    %% or just the readings, without instruments
+T-1.coil2.out = 55 °C
 ```
 
 - `TAG.coil1.in` and `TAG.coil1.out` name an end; plain `TAG.coil1` still means the outlet for a
@@ -229,8 +235,12 @@ T-1.coil1.out --- TT-2                  %% …and on the outlet, whichever way t
 - `in "Text"` and `out "Text"` are drawn in small text outside the wall, as nozzle descriptions.
 - An instrument line joins the pipe where it meets it, at a junction dot, rather than running
   along it into the coil. The same goes for a second line on a named nozzle.
+- A reading (`TAG.coil1.in = 66 °C`) is drawn in bold beside its end, between the line and the
+  description, with `?` for `unavailable` or `unknown` as on an instrument. It takes no room in the
+  layout, so it is the lighter choice on a busy diagram. Readings work on named nozzles too
+  (`CV.n1 = 70 °C`), and an empty one (a template that chose nothing) shows nothing.
 
-![Temperature probes on both ends of a coil](docs/images/coil-ends.png)
+![Temperature probes on one coil, readings on the other](docs/images/coil-ends.png)
 
 [`examples/coil-ends.mmd`](examples/coil-ends.mmd) has this example.
 
@@ -257,6 +267,8 @@ C-3 --> CV.n2                           %% …or to one
 - Lines without a nozzle attach as before.
 - Several lines can share a nozzle (a pipe and the instrument on it): the first process line runs
   into it, and the others join that pipe at a junction dot.
+- `CV.n1 = 70 °C` shows a reading at the nozzle, in bold between the line and its description;
+  see [Coil ends](#coil-ends).
 
 ### Solar and electrical
 

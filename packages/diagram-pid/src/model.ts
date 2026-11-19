@@ -129,6 +129,8 @@ export interface Nozzle {
   id: string;
   side: NozzleSide;
   label?: string;
+  /** A reading shown at the nozzle, as an instrument's: `CV.n1 = 70 °C`. */
+  reading?: EquipmentState;
 }
 
 /**
@@ -147,6 +149,9 @@ export interface Coil {
   /** Descriptions of its inlet and outlet, drawn beside them like a nozzle's: `in "Solar flow"`. */
   labelIn?: string;
   labelOut?: string;
+  /** Readings shown at its inlet and outlet, as an instrument's: `T-1.coil1.in = 66 °C`. */
+  readingIn?: EquipmentState;
+  readingOut?: EquipmentState;
 }
 
 /** A coil's two ends: `TAG.coil1.in`, `TAG.coil1.out`. */

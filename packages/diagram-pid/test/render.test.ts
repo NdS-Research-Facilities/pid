@@ -290,8 +290,14 @@ describe('coil ends', () => {
     expect(diagnostics).toEqual([]);
     expect(model.equipment.find((e) => e.id === 'T-1')!.coils).toEqual([
       { height: 0.2, name: 'Solar coil', labelIn: 'Solar flow', labelOut: 'Solar return' },
+      {
+        height: 0.8, name: 'Hot water coil', labelIn: 'DHW in', labelOut: 'DHW out',
+        readingIn: expect.objectContaining({ raw: '12 °C' }), readingOut: expect.objectContaining({ raw: '55 °C' }),
+      },
     ]);
-    expect(model.streams.map(end)).toEqual(['SC-1>P-1', 'P-1>T-1.coil1', 'T-1.coil1>R-1', 'TT-1>T-1.coil1.in', 'T-1.coil1.out>TT-2']);
+    expect(model.streams.map(end)).toEqual([
+      'SC-1>P-1', 'P-1>T-1.coil1', 'T-1.coil1>R-1', 'TT-1>T-1.coil1.in', 'T-1.coil1.out>TT-2', 'F-1>T-1.coil2', 'T-1.coil2>D-1',
+    ]);
     expect(model.equipment.some((e) => e.id.includes('.coil'))).toBe(false);
   });
 
@@ -315,13 +321,51 @@ describe('coil ends', () => {
     const x = (id: string) => Number(new RegExp(`data-id="node-${id}"><g transform="translate\\((-?[\\d.]+)`).exec(svg)?.[1]);
     expect(x('TT-1')).toBeLessThan(x('T-1'));
     expect(x('TT-2')).toBeGreaterThan(x('T-1'));
-    expect(svg.match(/class="coil-label coil1-(in|out)"/g)).toHaveLength(2);
+    expect(svg.match(/class="nozzle-label coil-label coil1-(in|out)"/g)).toHaveLength(2);
     expect(svg).toContain('Solar flow');
     // Each thermometer line stops on its pipe, at a dot, rather than running along it.
     expect(svg.match(/class="tee-dot"/g)).toHaveLength(2);
     expect(overlappingLines(svg)).toEqual([]);
     const { off } = dotsOnJunctions(svg);
     expect(off).toEqual([]);
+  });
+
+  it('reads readings at coil ends and nozzles, declared before or after them; an empty one shows nothing', () => {
+    const { model, diagnostics } = parsePid(
+      'pid\n  CV.n1 = 70 °C\n  CV: block\n  nozzle CV n1 right\n  nozzle CV n2 right\n  CV.n2 =\n  T: tank\n  coil T bottom\n  T.coil1.out = unavailable\n  A.B = on\n',
+    );
+    expect(diagnostics).toEqual([]);
+    const cv = model.equipment.find((e) => e.id === 'CV')!;
+    expect(cv.nozzles![0]!.reading).toMatchObject({ raw: '70 °C' });
+    expect(cv.nozzles![1]!.reading).toBeUndefined();
+    expect(model.equipment.find((e) => e.id === 'T')!.coils![0]!.readingOut).toMatchObject({ kind: 'unknown' });
+    // A dotted tag that is no nozzle or coil end is still equipment, as before.
+    expect(model.equipment.find((e) => e.id === 'A.B')?.state).toMatchObject({ raw: 'on' });
+  });
+
+  it('reports readings on a coil without its end, or on a nozzle that is not there', () => {
+    const msgs = parsePid('pid\n  T: tank\n  coil T bottom\n  T.coil1 = 5 °C\n  T.coil3.in = 5 °C\n  CV: block\n  nozzle CV n1 left\n  CV.n9 = 1\n').diagnostics.map((d) => d.message);
+    expect(msgs).toEqual([
+      expect.stringContaining('T.coil1 has two ends: a reading goes on T.coil1.in or .out'),
+      expect.stringContaining('T has 1 coil: there is no coil3'),
+      expect.stringContaining('CV has no nozzle "n9"'),
+    ]);
+  });
+
+  it('draws readings in bold next to the line, the description beyond, and ? when unknown', async () => {
+    const mermaid = createMermaid();
+    await mermaid.registerExternalDiagrams([pid]);
+    const { svg } = await mermaid.render(
+      'rd',
+      'pid LR\n  CV: block\n  nozzle CV n1 right "CH flow"\n  CV.n1 = 70 °C\n  CV.n1 --> D\n  T: tank\n  coil T bottom "S" in "Flow"\n  T.coil1.in = unavailable\n  A --> T.coil1\n',
+    );
+    // Bold text carries its position on a tspan.
+    const y = (text: string) => Number(new RegExp(`y="(-?[\\d.]+)"[^>]*>${text}<`).exec(svg)?.[1]);
+    expect(svg).toMatch(/class="reading" [^>]*font-weight="bold"[^>]*>(?:<tspan[^>]*>)?70 °C</);
+    expect(svg).toMatch(/class="reading reading-unknown coil-label coil1-in"[^>]*>(?:<tspan[^>]*>)?\?</);
+    // The reading sits between the line and the description.
+    expect(y('70 °C')).toBeGreaterThan(y('CH flow'));
+    expect(y('\\?')).toBeGreaterThan(y('Flow'));
   });
 
   it('taps a second line at a named nozzle off the first in the same way', async () => {

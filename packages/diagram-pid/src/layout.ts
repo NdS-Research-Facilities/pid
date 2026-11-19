@@ -51,6 +51,8 @@ export interface NodePlacement {
   margin: { x: number; y: number };
   /** Nozzle descriptions, measured, by nozzle id (and coil end descriptions, by `coilLabelKey`). */
   nozzleLabels: Map<string, MeasuredLabel>;
+  /** Readings at nozzles and coil ends, measured, keyed as `nozzleLabels`. */
+  readings: Map<string, MeasuredLabel>;
   /** An image or icon drawn inside a larger outline, to carry its nozzles. */
   framed?: boolean;
 }
@@ -342,7 +344,7 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
     const tee = eq.type === 'tee';
     if (tee) {
       // A tee is a point on the pipe: no labels, and a box no larger than its dot.
-      placements.set(eq.id, { labels: { width: 0, height: 0 }, side: 'below', width: sym.width, height: sym.height, turn: 0, scale: 1, margin: { x: 0, y: 0 }, nozzleLabels: new Map() });
+      placements.set(eq.id, { labels: { width: 0, height: 0 }, side: 'below', width: sym.width, height: sym.height, turn: 0, scale: 1, margin: { x: 0, y: 0 }, nozzleLabels: new Map(), readings: new Map() });
       return { id: eq.id, width: sym.width, height: sym.height, shape: eq.type };
     }
     const tag = inBubble ? undefined : measure(eq.id, font, Style.Bold);
@@ -371,12 +373,30 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
     let f = scaleOf(eq);
     let w = (turn ? sym.height : sym.width) * f;
     let h = (turn ? sym.width : sym.height) * f;
-    // Nozzles need room along their side: a symbol grows to give each its pitch; an image or icon
-    // keeps its size and is drawn inside a larger outline instead.
+    // Nozzle and coil end descriptions, and their readings in bold (`CV.n1 = 70 °C`), measured.
     const nozzles = eq.nozzles ?? [];
+    const note: FontKey = { ...small, size: size - 3 };
+    const nozzleLabels = new Map<string, MeasuredLabel>();
+    const readings = new Map<string, MeasuredLabel>();
+    for (const z of nozzles) {
+      if (z.label) nozzleLabels.set(z.id, measure(z.label, note));
+      if (z.reading) readings.set(z.id, measure(instrumentText(z.reading), note, Style.Bold));
+    }
+    // A coil's ends are described the same way, outside the wall they are on (`coil1.in`).
+    eq.coils?.forEach((c, i) => {
+      if (c.labelIn) nozzleLabels.set(coilLabelKey(i, 'in'), measure(c.labelIn, note));
+      if (c.labelOut) nozzleLabels.set(coilLabelKey(i, 'out'), measure(c.labelOut, note));
+      if (c.readingIn) readings.set(coilLabelKey(i, 'in'), measure(instrumentText(c.readingIn), note, Style.Bold));
+      if (c.readingOut) readings.set(coilLabelKey(i, 'out'), measure(instrumentText(c.readingOut), note, Style.Bold));
+    });
+    // Nozzles need room along their side: a symbol grows to give each its pitch (more where a
+    // description and a reading stack); an image or icon keeps its size and is drawn inside a
+    // larger outline instead.
     const count = (sides: string[]) => Math.max(0, ...sides.map((sd) => nozzles.filter((z) => z.side === sd).length));
-    const needH = (count(['left', 'right']) + 1) * NOZZLE_PITCH;
-    const needW = (count(['top', 'bottom']) + 1) * NOZZLE_PITCH;
+    const pitch = (sides: string[]) =>
+      NOZZLE_PITCH + Math.max(0, ...nozzles.filter((z) => sides.includes(z.side) && nozzleLabels.has(z.id)).map((z) => readings.get(z.id)?.height ?? 0));
+    const needH = (count(['left', 'right']) + 1) * pitch(['left', 'right']);
+    const needW = (count(['top', 'bottom']) + 1) * pitch(['top', 'bottom']);
     const framed = nozzles.length > 0 && !!(eq.image || eq.icon);
     if (nozzles.length && !framed) {
       const g = Math.max(1, nozzles.some((z) => z.side === 'left' || z.side === 'right') ? needH / h : 1, nozzles.some((z) => z.side === 'top' || z.side === 'bottom') ? needW / w : 1);
@@ -385,20 +405,14 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
       w = Math.max(w + 12, needW);
       h = Math.max(h + 12, needH);
     }
-    // Room beyond the symbol for each nozzle's stub and its description, mirrored either side.
-    const nozzleLabels = new Map<string, MeasuredLabel>();
-    for (const z of nozzles) if (z.label) nozzleLabels.set(z.id, measure(z.label, { ...small, size: size - 3 }));
-    // A coil's ends are described the same way, outside the wall they are on (`coil1.in`).
-    eq.coils?.forEach((c, i) => {
-      if (c.labelIn) nozzleLabels.set(coilLabelKey(i, 'in'), measure(c.labelIn, { ...small, size: size - 3 }));
-      if (c.labelOut) nozzleLabels.set(coilLabelKey(i, 'out'), measure(c.labelOut, { ...small, size: size - 3 }));
-    });
-    const room = (sides: string[]) =>
-      Math.max(0, ...nozzles.filter((z) => sides.includes(z.side)).map((z) => NOZZLE_STUB + (nozzleLabels.get(z.id)?.width ?? 0) + 4));
-    const coilRoom = Math.max(0, ...[...nozzleLabels].filter(([k]) => k.startsWith('coil')).map(([, l]) => l.width + 6));
+    // Room beyond the symbol for each nozzle's stub and its description or reading, mirrored either side.
+    const widest = (k: string) => Math.max(nozzleLabels.get(k)?.width ?? 0, readings.get(k)?.width ?? 0);
+    const room = (sides: string[]) => Math.max(0, ...nozzles.filter((z) => sides.includes(z.side)).map((z) => NOZZLE_STUB + widest(z.id) + 4));
+    const coilKeys = [...new Set([...nozzleLabels.keys(), ...readings.keys()])].filter((k) => k.startsWith('coil'));
+    const coilRoom = Math.max(0, ...coilKeys.map((k) => widest(k) + 6));
     const margin = { x: Math.max(room(['left', 'right']), coilRoom), y: room(['top', 'bottom']) };
     const side = labelSide(model.direction, eq);
-    placements.set(eq.id, { labels, side, width: w, height: h, turn, scale: f, margin, nozzleLabels, ...(framed ? { framed } : {}) });
+    placements.set(eq.id, { labels, side, width: w, height: h, turn, scale: f, margin, nozzleLabels, readings, ...(framed ? { framed } : {}) });
     // The symbol sits in the middle of the box, so streams attach at its centre line; the space
     // the labels take on one side is mirrored on the other.
     const across = side === 'left' || side === 'right';
