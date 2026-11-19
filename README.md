@@ -419,6 +419,22 @@ template engine is included (MIT): `${states['e']}`, `${attr('e', 'a')}`, `${rou
 `${timestamp('e')}` and more. Entity text is masked so it cannot break the diagram syntax; the
 P&ID parser decodes it for display.
 
+pid-card adds two things ha-mermaid does not have, so templates using them work here only:
+
+- **`and` / `or`** combine conditions, `and` before `or`, both below comparisons; brackets group.
+  They give `true` or `false`, and stop as soon as the outcome is known.
+- **`switch(value, case, result, …, default)`** gives the result after the first case equal to
+  the value (numbers compare as numbers, like `==`), else the default, else nothing. As with
+  `if`, a quoted result may hold its own `${…}`.
+
+```
+%% before: nested ifs in quoted branches
+class m1 ${if(is_state('binary_sensor.burner', 'on'), '${if(is_state("binary_sensor.tap", "on"), "warm", "hot")}', 'warm')}
+%% after
+class m1 ${if(is_state('binary_sensor.burner', 'on') and is_state('binary_sensor.tap', 'off'), 'hot', 'warm')}
+class k1 ${switch(attr('water_heater.boiler', 'display_code'), 0, 'hot', 'warm')}
+```
+
 **Clicking equipment.** Equipment and instruments whose state line reads a single entity
 (`TT-101 = ${states['sensor.flow_temp']} °C`) open that entity's more-info dialog when clicked.
 `actions` sets or overrides what a click does, with Home Assistant's usual action configs:
@@ -536,4 +552,6 @@ Mermaid v13 is alpha; the version is pinned exactly to `13.0.0-alpha.3`.
 ## License
 
 [MIT](LICENSE). `packages/ha-card/src/vendor/template-renderer.ts` comes from
-[ha-mermaid](https://github.com/pajew-ski/ha-mermaid) and keeps its own MIT notice.
+[ha-mermaid](https://github.com/pajew-ski/ha-mermaid) and keeps its own MIT notice; pid-card's
+additions (`and` / `or`, `switch`) are marked in it, and ha-mermaid's own tests for it run here
+unchanged.
