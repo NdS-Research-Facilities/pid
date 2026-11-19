@@ -377,6 +377,36 @@ describe('coil ends', () => {
   });
 });
 
+describe('line order on a side', () => {
+  // The home heating installation as of v0.7.1 (templates filled in): cold water came in above
+  // the hot water outlet on the buffer's left wall, hopping over it.
+  const src = `pid LR\n  CV: block "Central heating" = postrun_ch\n  icon CV mdi:heat-pump-outline 50\n  nozzle CV n1 right "CH flow"\n  nozzle CV n2 right "CH return"\n  nozzle CV n4 left "DHW out"\n  nozzle CV n3 left "DHW in"\n  T-1: vessel "Solar buffer" \n  coil T-1 bottom "CV coil"\n  coil T-1 top right   "Solar coil"\n  gradient T-1 85 °C, 70 °C, 60 °C\n  V-1: valve3 T "Bypass" = AC\n  SC-1: collector "Solar collector"\n  gradient SC-1 0 °C, 0 °C\n  D-1: product "Hot water"    \n  i.T-1: instrument "Buffer temp" = 42.5 °C\n  F-1: feed "Cold water"\n  P-1: pump "VV pump keuken" = on\n  VV-Keuken: block "Vloerverwarming"\n  icon VV-Keuken mdi:heating-coil 48\n  P-2: pump "VV pump studio" = on\n  VV-Studio: block "Vloerverwarming"\n  icon VV-Studio mdi:heating-coil 48\n  P-3: pump "Solar pump"\n  CV-Radiators: block "Radiators"\n  icon CV-Radiators mdi:radiator 48\n  C-1: tee\n  C-2: tee\n  C-3: tee\n  C-4: tee "aaaaaaa"\n  i.T-1 i1@-.- T-1\n  T-1.coil1.in = 12 °C\n  T-1.coil1.out = 24 °C\n  T-1.coil2.in = 12 °C\n  T-1.coil2.out = 24 °C\n  CV.n1 m1@--> C-1\n  C-1 m2@-->|1| P-1\n  stream 1 { 88.0 C }\n  C-1 m3@--> P-2\n  P-1 k1@--> VV-Keuken\n  P-2 s1@--> VV-Studio\n  C-1 m4@--> CV-Radiators\n  T-1 hw1@--> CV.n3\n  VV-Keuken r1@--> C-2\n  VV-Studio r2@--> C-2\n  CV-Radiators r8@--> C-2\n  C-3 r7@--> V-1.B \n  T-1.coil1 r5@--> C-3\n  C-2 r6@--> V-1.A\n  V-1.C r3@--> T-1.coil1\n  C-3 r4@--> CV.n2\n  CV.n4 hw2@--> D-1\n  F-1 cw1@--> T-1\n  SC-1 sh1@--> T-1.coil2.in\n  P-3 sh3@--> SC-1\n  T-1.coil2.out sh2@--> P-3`;
+
+  it('keeps cold water in below the hot water out, and takes the order with the fewest hops', async () => {
+    const mermaid = createMermaid();
+    await mermaid.registerExternalDiagrams([pid]);
+    const { svg } = await mermaid.render('order', src);
+    const path = (name: string) => {
+      const id = parsePid(src).model.streams.find((s) => s.name === name)!.id;
+      const d = new RegExp(`data-id="edge-${id}"[^>]*>\\s*<path d="([^"]+)"`).exec(svg)![1]!;
+      return [...d.matchAll(/[ML]\s*(-?[\d.]+)[ ,](-?[\d.]+)/g)].map((m) => ({ x: +m[1]!, y: +m[2]! }));
+    };
+    const segs = (pts: { x: number; y: number }[]) => pts.slice(1).map((p, k) => [pts[k]!, p] as const);
+    const cross = (a: { x: number; y: number }[], b: { x: number; y: number }[]) =>
+      segs(a).some(([a0, a1]) =>
+        segs(b).some(([b0, b1]) => {
+          const [h0, h1, v0, v1] = Math.abs(a0.y - a1.y) < 0.5 ? [a0, a1, b0, b1] : [b0, b1, a0, a1];
+          if (Math.abs(h0.y - h1.y) >= 0.5 || Math.abs(v0.x - v1.x) >= 0.5) return false;
+          const inside = (p: number, q: number, r: number) => p > Math.min(q, r) + 0.5 && p < Math.max(q, r) - 0.5;
+          return inside(v0.x, h0.x, h1.x) && inside(h0.y, v0.y, v1.y);
+        }),
+      );
+    expect(cross(path('cw1'), path('hw1'))).toBe(false);
+    const hops = [...svg.matchAll(/<g class="stream [^"]*" data-id="edge-s\d+"[^>]*>\s*<path d="([^"]+)"/g)].reduce((n, m) => n + (m[1]!.match(/A/g) ?? []).length, 0);
+    expect(hops).toBeLessThanOrEqual(3);
+  });
+});
+
 describe('nozzles', () => {
   const src = `pid LR
   CV: block "Central heating"

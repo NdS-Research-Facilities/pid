@@ -936,7 +936,8 @@ function sideLimit(eq: Equipment, place: NodePlacement, across: boolean): number
 /**
  * Where lines meet a symbol when several share one of its sides: spread evenly around the
  * centre, ordered by where each heads once it leaves (the one going up takes the top point, the
- * one going left the left point), so they neither overlap nor cross. Tees join their lines on
+ * one going left the left point), so they neither overlap nor cross. Of lines turning the same
+ * way, the one turning nearest the symbol takes the outermost point, so the others pass it. Tees join their lines on
  * purpose, and ports, coil nozzles and actuators have their own points: they are left alone.
  * Keys are `streamId:source` / `streamId:target`.
  */
@@ -946,7 +947,8 @@ function planSlots(
   byId: ReadonlyMap<string, Equipment>,
   mirrored: ReadonlySet<string>,
 ): Map<string, number> {
-  type End = { key: string; pull: number };
+  /** `turn`: which way the line turns once out (-1, 0 not at all, 1); `out`: how far out it turns. */
+  type End = { key: string; stream: string; pull: number; turn: number; out: number; route: Point[] };
   const groups = new Map<string, { eq: Equipment; across: boolean; ends: End[] }>();
   for (const s of model.streams) {
     const pts = layout.edges.get(s.id)?.points;
@@ -970,7 +972,13 @@ function planSlots(
       const sign = Math.sign(U(P) - U(node)) || 1;
       const id = `${eq.id}:${across ? 'h' : 'v'}:${sign}`;
       const group = groups.get(id) ?? { eq, across, ends: [] };
-      group.ends.push({ key: `${s.id}:${atEnd ? 'target' : 'source'}`, pull: V(Q) });
+      // A straight line turns at its far end, towards where that end is from the symbol's centre.
+      const far = pts.length < 3;
+      const towards = far ? V(P) - V(node) : V(Q) - V(P);
+      const turn = Math.abs(towards) < 0.5 ? 0 : Math.sign(towards);
+      // The route from the symbol outwards, to try each order of the side's lines on.
+      const route = (atEnd ? [...pts].reverse() : pts).map((p) => ({ x: p.x, y: p.y }));
+      group.ends.push({ key: `${s.id}:${atEnd ? 'target' : 'source'}`, stream: s.id, pull: V(Q), turn, out: Math.abs(U(P) - U(E)), route });
       groups.set(id, group);
     }
   }
@@ -982,10 +990,95 @@ function planSlots(
     const limit = sideLimit(eq, place, across);
     const centre = across ? node.y : node.x;
     const gap = Math.min(LINE_GAP, (2 * limit) / (ends.length - 1));
-    ends.sort((a, b) => a.pull - b.pull);
-    ends.forEach((e, n) => out.set(e.key, centre + (n - (ends.length - 1) / 2) * gap));
+    // Of two lines, the one turning nearer the symbol decides: it goes on the side it turns to,
+    // so the other passes it rather than crossing it.
+    ends.sort((a, b) => {
+      if (Math.abs(a.out - b.out) > 0.5) {
+        const near = a.out < b.out ? a : b;
+        if (near.turn) return near === a ? near.turn : -near.turn;
+      }
+      return a.pull - b.pull;
+    });
+    const at = (n: number) => centre + (n - (ends.length - 1) / 2) * gap;
+    // That order is a good guess; with few lines, every order is tried and the one with the
+    // fewest crossings (hops) kept, the guess winning ties.
+    const best = ends.length <= MAX_TRIED ? fewestCrossings(ends, across, at, layout, model) : ends;
+    best.forEach((e, n) => out.set(e.key, at(n)));
   }
   return out;
+}
+
+/** Sides with up to this many lines try every order of them (6! = 720). */
+const MAX_TRIED = 6;
+
+/**
+ * The order of a side's lines whose routes cross the diagram's other lines, and each other, the
+ * fewest times. Each route is moved onto its point on the side for its first run, as `attach`
+ * does, then joins the layout's route where that turns.
+ */
+function fewestCrossings<T extends { stream: string; route: Point[] }>(
+  ends: readonly T[],
+  across: boolean,
+  at: (n: number) => number,
+  layout: PidLayout,
+  model: PidModel,
+): T[] {
+  const mine = new Set(ends.map((e) => e.stream));
+  const others: [Point, Point][] = [];
+  for (const s of model.streams) {
+    if (mine.has(s.id)) continue;
+    const pts = layout.edges.get(s.id)?.points ?? [];
+    for (let k = 0; k + 1 < pts.length; k++) others.push([pts[k]!, pts[k + 1]!]);
+  }
+  const placed = (e: T, v: number): [Point, Point][] => {
+    const [E, P, ...rest] = e.route;
+    const on = (p: Point, w = v) => (across ? { x: p.x, y: w } : { x: w, y: p.y });
+    // A line that turns slides its first run, turn and all, onto its point; a straight one keeps
+    // its far end and steps across just out from the symbol.
+    const U = (p: Point) => (across ? p.x : p.y);
+    const V = (p: Point) => (across ? p.y : p.x);
+    const stub = (w: number) => (across ? { x: U(E!) + Math.sign(U(P!) - U(E!)) * STUB, y: w } : { x: w, y: U(E!) + Math.sign(U(P!) - U(E!)) * STUB });
+    const pts = rest.length ? [on(E!), on(P!), ...rest] : [on(E!), stub(v), stub(V(P!)), P!];
+    const segs: [Point, Point][] = [];
+    for (let k = 0; k + 1 < pts.length; k++) segs.push([pts[k]!, pts[k + 1]!]);
+    return segs;
+  };
+  const count = (order: readonly T[]) => {
+    const routes = order.map((e, n) => placed(e, at(n)));
+    let n = 0;
+    routes.forEach((segs, i) => {
+      for (const a of segs) {
+        for (const b of others) if (crossesAt(a, b)) n++;
+        for (let j = i + 1; j < routes.length; j++) for (const b of routes[j]!) if (crossesAt(a, b)) n++;
+      }
+    });
+    return n;
+  };
+  let best = [...ends];
+  let fewest = count(best);
+  const permute = (rest: T[], chosen: T[]) => {
+    if (fewest === 0) return;
+    if (!rest.length) {
+      const n = count(chosen);
+      if (n < fewest) [best, fewest] = [[...chosen], n];
+      return;
+    }
+    rest.forEach((e, i) => permute([...rest.slice(0, i), ...rest.slice(i + 1)], [...chosen, e]));
+  };
+  permute([...ends], []);
+  return best;
+}
+
+/** Whether two straight runs cross, one along and one across, away from their ends. */
+function crossesAt([a0, a1]: [Point, Point], [b0, b1]: [Point, Point]): boolean {
+  const aH = Math.abs(a0.y - a1.y) < 0.5;
+  const bH = Math.abs(b0.y - b1.y) < 0.5;
+  if (aH === bH) return false;
+  const [h0, h1, v0, v1] = aH ? [a0, a1, b0, b1] : [b0, b1, a0, a1];
+  const x = v0.x;
+  const y = h0.y;
+  const inside = (p: number, q: number, r: number) => p > Math.min(q, r) + 0.5 && p < Math.max(q, r) - 0.5;
+  return inside(x, h0.x, h1.x) && inside(y, v0.y, v1.y);
 }
 
 /** Compact symbols are met on their centre line; tall or wide ones anywhere near it. */
