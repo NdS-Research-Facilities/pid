@@ -171,6 +171,11 @@ Coils 85.91 → 62.74, junctions 66.73 → 36.8, home-heating 126.82 → 120.73,
 253.36, all-capabilities 458.55 → 448.55; nothing worse. PNGs of coils, junctions and home-heating
 looked at: agree.
 
+`examples/home-heating.mmd` was then replaced by the user's newer version of the installation
+(Boiler buffer, readings, live classes for an unavailable boiler): it now scores hops 1, bends
+23, length 9601, total 129.01 with the search; the numbers above are for the version before. With
+`layoutPid` alone that version has a 14 px bump in s17; the search avoids it.
+
 Not done: the **home installation stays at 141.1**. `combos.mjs` tries all 1184 combinations of
 its choices and none beats the guess, so the search cannot reach it. Its 3 hops are routing, not choices:
 - hw1 / hw2 at CV's left wall: n4 (upper) and n3 (lower) both lead upwards, so they must cross

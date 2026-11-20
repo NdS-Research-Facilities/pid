@@ -1,76 +1,71 @@
 pid LR
   %% ── Equipment ───────────────────────────────────────────────────────────
   CV: block "Central heating" = ${states['water_heater.boiler']}
-  icon CV mdi:heat-pump-outline 50
+  icon CV mdi:heat-pump-outline 100
   nozzle CV n1 right "CH flow"
   nozzle CV n2 right "CH return"
-  nozzle CV n4 left "DHW out"
   nozzle CV n3 left "DHW in"
-
-
-  T-1: vessel "Solar buffer"
+  nozzle CV n4 left "DHW out"
+  
+  T-1: vessel "Boiler" = "42.5 °C"
   coil T-1 bottom "CV coil"
-  coil T-1 top "Solar coil"
+  coil T-1 top right "Solar coil"
   gradient T-1 85 °C, 70 °C, 60 °C
-
-  V-1: valve3 T "Bypass" = AB
-
+  V-1: valve3 T "Bypass" = AC
   SC-1: collector "Solar collector"
   gradient SC-1 ${round(states['sensor.collector_top_temp'], 0)} °C, ${round(states['sensor.collector_bottom_temp'], 0)} °C
-
   F-1: feed "Cold water"
-  D-1: product "Hot water"
-
+  D-1: product "Hot water" 
   P-1: pump "VV pump keuken" = ${states['switch.keuken_cv_pomp_vv_lsc_plug_relay']}
   VV-Keuken: block "Vloerverwarming"
   icon VV-Keuken mdi:heating-coil 48
-
   P-2: pump "VV pump studio" = ${states['switch.studio_cv_pomp_vv_lsc_plug_relay']}
   VV-Studio: block "Vloerverwarming"
   icon VV-Studio mdi:heating-coil 48
-
-  P-3: pump "Solar pump" = "on"
-
+  P-3: pump "Solar pump"
   CV-Radiators: block "Radiators"
   icon CV-Radiators mdi:radiator 48
-
-
-
-
   C-1: tee
   C-2: tee
   C-3: tee
-
+  %% ── Instruments: ISA-5.1 tag, location, name, live value
+  T-1.coil1.in = 12.3 °C
+  T-1.coil1.out = 24.1 °C
+  T-1.coil2.in = 12.8 °C
+  T-1.coil2.out = 24.3 °C
+  CV.n1 = attr("water_heater.boiler", "display_code")
+  CV.n2 = 24.3 °C
+  
   %% ── connections ───────────────────────────────────────────────────────────
+  CV.n4 hw2@--> D-1
   CV.n1 m1@--> C-1
+  
   C-1 m2@--> P-1
   C-1 m3@--> P-2
   P-1 k1@--> VV-Keuken
   P-2 s1@--> VV-Studio
   C-1 m4@--> CV-Radiators
+  T-1 hw1@--> CV.n3
   %% ── returns ────────────────────────
   VV-Keuken r1@--> C-2
   VV-Studio r2@--> C-2
   CV-Radiators r8@--> C-2
+  %% ── bypass ────────────────────────    
+  C-3 r7@--> V-1.B 
+  T-1.coil1 r5@--> C-3
+  C-2 r6@--> V-1.A
   V-1.C r3@--> T-1.coil1
   C-3 r4@--> CV.n2
-  T-1.coil1 r5@--> C-3
-  C-2 r6@--> V-1.B
-  V-1.A r7@--> C-3
-  CV.n4 hw2@--> D-1
   F-1 cw1@--> T-1
-  T-1 hw1@--> CV.n3
-
-  SC-1 sh1@--> T-1.coil2
-  T-1.coil2 sh2@--> P-3
+  SC-1 sh1@--> T-1.coil2.in
   P-3 sh3@--> SC-1
-
-
-
+  T-1.coil2.out sh2@--> P-3
+  %% ── Instrument connections ────────────────────────    
   %% ── The drawing's colours ───────────────────────────────────────────────
   classDef blue fill:#7da7d9,stroke:#4a78b5
   classDef orange fill:#ff8a1f,stroke:#e06c00
   classDef white fill:#ffffff,stroke:#ff0000
+  classDef green fill:#0f0,stroke:#0f0
   %% ── Line classes: hot while the burner fires, warm otherwise, off while a pump stands still ──
   classDef hot    stroke:#c62828,stroke-width:5px
   classDef warm   stroke:#ef6c00,stroke-width:5px
@@ -78,29 +73,18 @@ pid LR
   classDef return stroke:#5b8fd0,stroke-width:5px
   classDef cold_water fill:#7da7d9,stroke:#4a78b5
   classDef hot_water  stroke:#c62828
-
   class m1,m2,m3,m4,k1,sh2,sh3 warm
   class sh1 hot
   class r1,r2,r3,r4,r5,r6,r7,r8 return
   class cw1,F-1 cold_water
-  class hw1,hw2,D-1 hot_water
-
+  class hw2,D-1 hot_water
+  class hw1 orange
   %% ── Live line classes (in the card). They come after the fixed classes above, so they win;
   %% ── outside Home Assistant the templates are not filled in and the fixed classes stay.
-  %% class m1,m2,m3 ${if(is_state('binary_sensor.boiler_burner', 'on'), 'hot', 'warm')}
   class m1,m2,m3,m4 ${if(is_state('binary_sensor.boiler_burner', 'on'), '${if(is_state("binary_sensor.boiler_hot_water_tap", "on"), "warm",   "hot")}' , 'warm')}
-
-
-  %%class k1 ${if(is_state('switch.keuken_cv_pomp_vv_lsc_plug_relay', 'on'), '${if(is_state("binary_sensor.boiler_burner", "on"), "hot","warm")}', '${if(is_state("binary_sensor.boiler_burner", "on"), "warm","off")}')}
-  %% class s1 ${if(is_state('switch.studio_cv_pomp_vv_lsc_plug_relay', 'on'), '${if(is_state("binary_sensor.boiler_burner", "on"), "hot","warm")}', '${if(is_state("binary_sensor.boiler_burner", "on"), "warm","off")}')}
-
-  %%class s1 ${if(is_state('switch.studio_cv_pomp_vv_lsc_plug_relay', 'on'), '${if(is_state("binary_sensor.boiler_burner", "on"), "hot",   "warm")}', 'off')}
-  %%class k1 ${if(is_state('binary_sensor.boiler_burner', 'on'), '${if(is_state("switch.keuken_cv_pomp_vv_lsc_plug_relay", "on"), "hot",   "warm")}',)}
-
   class k1 ${if(is_state('switch.keuken_cv_pomp_vv_lsc_plug_relay', 'on'), '${if(attr("water_heater.boiler", "display_code") == 0,  "hot", "warm")}', '${if(attr("water_heater.boiler", "display_code") == 0,  "warm", "off")}')}
   class s1 ${if(is_state('switch.studio_cv_pomp_vv_lsc_plug_relay', 'on'), '${if(attr("water_heater.boiler", "display_code") == 0,  "hot", "warm")}', '${if(attr("water_heater.boiler", "display_code") == 0,  "warm", "off")}')}
-
-
-
-  %% class k1 ${if(is_state('binary_sensor.boiler_burner', 'on'), '${if(is_state("switch.keuken_cv_pomp_vv_lsc_plug_relay", "on"), "${if(is_state("binary_sensor.boiler_hot_water_tap", "on"), "warm", "hot")}", "warm")}', 'off')}
-  %% class s1 ${if(is_state('binary_sensor.boiler_burner', 'on'), '${if(is_state("switch.studio_cv_pomp_vv_lsc_plug_relay", "on"), "${if(is_state(\"binary_sensor.boiler_hot_water_tap\", \"on\"), \"off\",   \"hot\")}",   "off")}', 'off')}
+  class k1 ${if(is_state('water_heater.boiler', 'unavailable'), 'off','')}
+  class s1 ${if(is_state('water_heater.boiler', 'unavailable'), 'off','')}
+  class m1,m2,m3,m4 ${if(is_state('water_heater.boiler', 'unavailable'), 'off','')}
+ 
