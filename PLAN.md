@@ -14,8 +14,8 @@ file, then the files it names; nothing else from earlier sessions is needed.
   `joinAtDots` (tee dots), `tapsAtSharedEnds` (a second line at a nozzle or coil end joins the pipe
   at a dot), `hopPaths` (arcs at crossings).
 - Choices made one at a time, each without looking at the whole drawing: valve mirroring
-  (`layout.ts`, "Mirror each valve whose branch heads the other way"), coil walls and which coil
-  nozzle is the inlet (`coilSides`, `coilInletLow`), line order on a side (already scored).
+  (`layout.ts`, the `mirrored` set), coil walls and which coil nozzle is the inlet (`coilSides`,
+  `coilInletLow`), line order on a side (already scored).
 - Benchmark diagrams: every `examples/*.mmd`, plus the real home installation embedded in
   `packages/diagram-pid/test/render.test.ts` (`describe('line order on a side')`, `const src`).
   `pnpm test` in `packages/diagram-pid` renders the examples to `out/*.svg`.
