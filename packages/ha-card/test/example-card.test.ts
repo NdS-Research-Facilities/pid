@@ -137,11 +137,11 @@ describe('examples/all-capabilities.card.yaml', () => {
 });
 
 describe('examples/home-heating.mmd in the card', () => {
-  // Lines in written order, by their names.
-  const NAMES = ['m1', 'm2', 'm3', 'k1', 's1', 'm4', 'r1', 'r2', 'r8', 'r3', 'r4', 'r5', 'r6', 'r7', 'hw2', 'cw1', 'hw1', 'sh1', 'sh2', 'sh3'];
+  const content = readFileSync(`${import.meta.dirname}/../../../examples/home-heating.mmd`, 'utf8');
+  // Line names in written order (`CV.n1 m1@--> C-1`), so reordering the file keeps them right.
+  const NAMES = [...content.matchAll(/^\s*[^%\s]\S*\s+([\w-]+)@-/gm)].map((m) => m[1]!);
   type States = { burner: string; tap: string; kitchen: string; studio: string; displayCode: number };
   async function render(st: States) {
-    const content = readFileSync(`${import.meta.dirname}/../../../examples/home-heating.mmd`, 'utf8');
     const card = document.createElement('pid-card') as PidCard;
     document.body.appendChild(card);
     card.setConfig({ type: 'custom:pid-card', content });
@@ -168,6 +168,7 @@ describe('examples/home-heating.mmd in the card', () => {
   const [red, orange, grey, blue] = ['#c62828', '#ef6c00', '#9e9e9e', '#5b8fd0'];
 
   it('burner on, no tap: the flow is hot; a running circuit hot, a stopped one warm', async () => {
+    expect(NAMES).toHaveLength(20);
     const { stroke, svg } = await render({ burner: 'on', tap: 'off', kitchen: 'on', studio: 'off', displayCode: 0 });
     expect(['m1', 'm2', 'm3', 'm4'].map(stroke)).toEqual([red, red, red, red]);
     expect([stroke('k1'), stroke('s1')]).toEqual([red, orange]);
