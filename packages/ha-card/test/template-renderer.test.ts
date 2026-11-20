@@ -1,5 +1,7 @@
-// pid-card's additions to the vendored template engine: `and` / `or` and `switch`.
+// `and` / `or` and `switch`, as pid-card's diagrams use them (contributed to ha-mermaid in #14).
 // Upstream's own tests are in template-renderer.upstream.test.mjs.
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { HomeAssistant } from '../src/types.js';
 import { renderTemplate } from '../src/vendor/template-renderer.js';
@@ -92,5 +94,16 @@ describe('the README example', () => {
         const h = { ...hass, states: { ...hass.states, 'binary_sensor.burner': entity(burner), 'binary_sensor.tap': entity(tap) } } as unknown as HomeAssistant;
         expect(renderTemplate(after, h), `${burner}/${tap}`).toBe(renderTemplate(before, h));
       }
+  });
+});
+
+describe('the vendored engine', () => {
+  it('is ha-mermaid v0.9.0 unchanged, apart from its header and import path', () => {
+    const ours = readFileSync(`${import.meta.dirname}/../src/vendor/template-renderer.ts`, 'utf8');
+    const body = ours
+      .slice(ours.indexOf('import type { HomeAssistant }'))
+      .replace('import type { HomeAssistant } from "../types.js";', 'import type { HomeAssistant } from "./types";');
+    // sha256 of src/template-renderer.ts at pajew-ski/ha-mermaid@31362b84 (release v0.9.0).
+    expect(createHash('sha256').update(body).digest('hex')).toBe('2ec7a89815e61d2a76f67b759fbcc7c75b6df606c6c9c2a5fef38e35f3c2171a');
   });
 });

@@ -1,5 +1,5 @@
 // Vendored from ha-mermaid (https://github.com/pajew-ski/ha-mermaid), test/template-renderer.test.mjs
-// at commit 5f197936c0152879c744c4d624959ae733496860 (MIT, Copyright (c) 2026 Michael Pajewski).
+// at commit 31362b840403cbbcb6a06851f3418824e4b488cf (release v0.9.0) (MIT, Copyright (c) 2026 Michael Pajewski).
 // Run with vitest instead of node:test; otherwise unchanged, so the engine keeps its upstream behaviour.
 import assert from "node:assert/strict";
 import { test } from "vitest";
@@ -157,6 +157,53 @@ test("if operands and branches", () => {
   const msg = hass({ "sensor.msg": entity("[x]") });
   assert.equal(renderTemplate("${if(true_val > 0, 'a', 'b')}", msg), "${if(true_val > 0, 'a', 'b')}");
   assert.equal(renderTemplate("${if(1 > 0, states['sensor.msg'], 'b')}", msg), "#91;x#93;");
+});
+
+test("and / or combine conditions", () => {
+  const h = hass();
+  assert.equal(renderTemplate("${is_state('switch.pump', 'on') and is_state('binary_sensor.motion', 'on')}", h), "false");
+  assert.equal(renderTemplate("${is_state('switch.pump', 'on') or is_state('binary_sensor.motion', 'on')}", h), "true");
+  // and binds tighter than or, both looser than comparisons
+  assert.equal(renderTemplate("${is_state('switch.pump', 'on') or is_state('binary_sensor.motion', 'on') and 0}", h), "true");
+  assert.equal(renderTemplate("${(is_state('switch.pump', 'on') or 1) and is_state('binary_sensor.motion', 'on')}", h), "false");
+  assert.equal(renderTemplate("${states['sensor.temp'] > 25 and states['sensor.temp'] < 30}", h), "true");
+  assert.equal(renderTemplate("${if(is_state('switch.pump', 'on') and states['sensor.temp'] > 25, 'A', 'B')}", h), "A");
+  // The right side is not evaluated once the outcome is known (it would fail here).
+  assert.equal(renderTemplate("${0 and timestamp('sensor.temp', 'week')}", h), "false");
+  assert.equal(renderTemplate("${1 or timestamp('sensor.temp', 'week')}", h), "true");
+  // Whole words only; a dangling operator leaves the expression unchanged.
+  assert.equal(renderTemplate("${is_state('switch.pump', 'on') andx 1}", h), "${is_state('switch.pump', 'on') andx 1}");
+  assert.equal(renderTemplate("${is_state('switch.pump', 'on') and}", h), "${is_state('switch.pump', 'on') and}");
+});
+
+test("and replaces nested if for every state", () => {
+  const nested = `\${if(is_state('binary_sensor.burner', 'on'), '\${if(is_state("binary_sensor.tap", "on"), "warm", "hot")}', 'warm')}`;
+  const flat = "${if(is_state('binary_sensor.burner', 'on') and is_state('binary_sensor.tap', 'off'), 'hot', 'warm')}";
+  for (const burner of ["on", "off"]) {
+    for (const tap of ["on", "off"]) {
+      const h = hass({ "binary_sensor.burner": entity(burner), "binary_sensor.tap": entity(tap) });
+      assert.equal(renderTemplate(flat, h), renderTemplate(nested, h), `${burner}/${tap}`);
+    }
+  }
+});
+
+test("switch picks the first matching case", () => {
+  const h = hass({ "water_heater.boiler": entity("heat", { display_code: 0 }), "sensor.msg": entity("[x]") });
+  assert.equal(renderTemplate("${switch(states['water_heater.boiler'], 'off', 'cold', 'heat', 'hot', 'warm')}", h), "hot");
+  assert.equal(renderTemplate("${switch(states['binary_sensor.motion'], 'on', 'run', 'stop')}", h), "stop");
+  assert.equal(renderTemplate("${switch(states['binary_sensor.motion'], 'on', 'run')}", h), "");
+  // Numbers compare as numbers, as with ==
+  assert.equal(renderTemplate("${switch(attr('water_heater.boiler', 'display_code'), 0, 'hot', 1, 'warm')}", h), "hot");
+  assert.equal(renderTemplate("${switch(states['sensor.temp'], 26.4, 'yes', 'no')}", h), "yes");
+  // A quoted result may contain its own template
+  assert.equal(
+    renderTemplate(`\${switch(states['switch.pump'], 'on', 'Pump \${round(states["sensor.temp"])} W', 'off')}`, h),
+    "Pump 26 W"
+  );
+  // Entity text in a result is masked
+  assert.equal(renderTemplate("${switch(1, 1, states['sensor.msg'])}", h), "#91;x#93;");
+  // A value with only a case is not enough
+  assert.equal(renderTemplate("${switch(states['switch.pump'], 'on')}", h), "${switch(states['switch.pump'], 'on')}");
 });
 
 test("timestamp follows hass.locale and has absolute forms", () => {

@@ -434,7 +434,8 @@ template engine is included (MIT): `${states['e']}`, `${attr('e', 'a')}`, `${rou
 `${timestamp('e')}` and more. Entity text is masked so it cannot break the diagram syntax; the
 P&ID parser decodes it for display.
 
-pid-card adds two things ha-mermaid does not have, so templates using them work here only:
+Two of them came from pid-card and are part of ha-mermaid since its v0.9.0, so templates using
+them work in both cards:
 
 - **`and` / `or`** combine conditions, `and` before `or`, both below comparisons; brackets group.
   They give `true` or `false`, and stop as soon as the outcome is known.
@@ -567,6 +568,6 @@ Mermaid v13 is alpha; the version is pinned exactly to `13.0.0-alpha.3`.
 ## License
 
 [MIT](LICENSE). `packages/ha-card/src/vendor/template-renderer.ts` comes from
-[ha-mermaid](https://github.com/pajew-ski/ha-mermaid) and keeps its own MIT notice; pid-card's
-additions (`and` / `or`, `switch`) are marked in it, and ha-mermaid's own tests for it run here
-unchanged.
+[ha-mermaid](https://github.com/pajew-ski/ha-mermaid) (v0.9.0, unchanged apart from its header and
+an import path, which a test checks) and keeps its own MIT notice; ha-mermaid's own tests for it
+run here unchanged.

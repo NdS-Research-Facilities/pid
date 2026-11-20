@@ -1,11 +1,8 @@
 /*
  * Vendored from ha-mermaid (https://github.com/pajew-ski/ha-mermaid), src/template-renderer.ts
- * at commit 5f197936c0152879c744c4d624959ae733496860, so diagrams written for that card keep
- * their template syntax. Changed from upstream, apart from this header and the import path:
- * pid-card additions (marked "pid-card:" below), which upstream does not understand:
- *   - `and` / `or` operators;
- *   - `switch(value, case, result, ..., default)`.
- * Upstream's own tests (test/template-renderer.upstream.test.mjs) still pass unchanged.
+ * at commit 31362b840403cbbcb6a06851f3418824e4b488cf (release v0.9.0), so diagrams written for that card keep their template
+ * syntax. Unchanged apart from this header and the import path below; a test checks that.
+ * `and` / `or` and `switch()` were contributed to ha-mermaid from pid-card (pull request #14).
  *
  * MIT License
  *
@@ -47,9 +44,9 @@ import type { HomeAssistant } from "../types.js";
  *   ${timestamp('e', 'time')}           absolute: 'time', 'date' or 'datetime'
  *   ${style_class('e', 'on:active', 'off:inactive')}
  *   ${raw(expr)}                        insert entity text without masking
- *   a and b, a or b                     pid-card: true / false, left to right,
+ *   a and b, a or b                     true / false, left to right,
  *                                       below comparisons; `and` before `or`
- *   ${switch(v, 'a', x, 'b', y, z)}     pid-card: the result after the first
+ *   ${switch(v, 'a', x, 'b', y, z)}     the result after the first
  *                                       case equal to v (as ==), else z or "";
  *                                       quoted results may contain ${...}
  *
@@ -74,7 +71,7 @@ type Node =
   | { t: "state"; id: string }
   | { t: "call"; name: string; args: Node[] }
   | { t: "bin"; op: string; l: Node; r: Node }
-  // pid-card: `and` / `or`, evaluated left to right, stopping as soon as the outcome is known.
+  // `and` / `or`, evaluated left to right, stopping as soon as the outcome is known.
   | { t: "logic"; op: "and" | "or"; l: Node; r: Node }
   | { t: "neg"; e: Node };
 
@@ -92,7 +89,7 @@ const ARITY: Record<string, [number, number]> = {
   timestamp: [1, 2],
   style_class: [1, Infinity],
   raw: [1, 1],
-  // pid-card: switch(value, case, result, ..., default)
+  // switch(value, case, result, ..., default)
   switch: [3, Infinity],
 };
 
@@ -158,7 +155,7 @@ function parse(src: string, start: number): { node: Node; end: number } {
     return v;
   };
 
-  // pid-card: `or` binds loosest, then `and`, then the comparisons below. A word operator must
+  // `or` binds loosest, then `and`, then the comparisons below. A word operator must
   // stand alone (`and` but not `android`).
   const word = (w: string): boolean => {
     ws();
@@ -346,7 +343,7 @@ export function renderTemplate(
       case "if":
         return result(truthy(arg(0)) ? args[1] : args[2]);
       case "switch": {
-        // pid-card: the result after the first case equal to the value; a last unpaired
+        // The result after the first case equal to the value; a last unpaired
         // argument is the default.
         const value = arg(0);
         for (let k = 1; k + 1 < args.length; k += 2) if (equals(value, arg(k))) return result(args[k + 1]);
