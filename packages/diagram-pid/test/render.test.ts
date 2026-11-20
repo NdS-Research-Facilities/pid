@@ -3,6 +3,7 @@ import { icons } from '@mermaid-js/plugin-icons';
 import { createMermaid } from 'mermaid';
 import { describe, expect, it } from 'vitest';
 import { boreProblem, declarations, imageUrl, junctions, parsePid, parseState, pid } from '../src/index.js';
+import { bumps, clutter, dotsOnJunctions, nearLines, overlappingLines, slantedLines, staleTeeEnds } from '../src/score.js';
 
 const examplesDir = new URL('../../../examples/', import.meta.url);
 const read = (name: string) => readFileSync(new URL(name, examplesDir), 'utf8');
@@ -439,6 +440,10 @@ describe('line order on a side', () => {
     const mermaid = createMermaid();
     await mermaid.registerExternalDiagrams([pid]);
     const { svg } = await mermaid.render('order', src);
+    // Kept as a benchmark diagram for the clutter score (scripts/score.mjs).
+    mkdirSync(new URL('../../../out/', import.meta.url), { recursive: true });
+    writeFileSync(new URL('../../../out/home-installation.svg', import.meta.url), svg);
+    expect(clutter(svg)).toMatchSnapshot();
     const path = (name: string) => {
       const id = parsePid(src).model.streams.find((s) => s.name === name)!.id;
       const d = new RegExp(`data-id="edge-${id}"[^>]*>\\s*<path d="([^"]+)"`).exec(svg)![1]!;
@@ -625,113 +630,6 @@ describe('tee dots', () => {
   });
 });
 
-/** Pairs of different lines in `svg` running along the same column or row (a tee's trunk excepted). */
-function overlappingLines(svg: string): string[] {
-  const lines = [...svg.matchAll(/<g class="stream [^"]*" data-id="edge-(s\d+)"[^>]*>\s*<path d="([^"]+)"/g)].map((m) => ({
-    id: m[1]!,
-    pts: [...m[2]!.matchAll(/[ML]\s*(-?[\d.]+)[ ,](-?[\d.]+)/g)].map((p) => ({ x: +p[1]!, y: +p[2]! })),
-  }));
-  const dots = [...svg.matchAll(/class="tee-dot" cx="([\d.]+)" cy="([\d.]+)"/g)].map((m) => ({ x: +m[1]!, y: +m[2]! }));
-  const found: string[] = [];
-  for (let i = 0; i < lines.length; i++)
-    for (let j = i + 1; j < lines.length; j++)
-      for (let a = 0; a + 1 < lines[i]!.pts.length; a++)
-        for (let b = 0; b + 1 < lines[j]!.pts.length; b++) {
-          const [a0, a1, b0, b1] = [lines[i]!.pts[a]!, lines[i]!.pts[a + 1]!, lines[j]!.pts[b]!, lines[j]!.pts[b + 1]!];
-          const v = Math.abs(a0.x - a1.x) < 0.5 && Math.abs(b0.x - b1.x) < 0.5 && Math.abs(a0.x - b0.x) < 0.5;
-          const h = Math.abs(a0.y - a1.y) < 0.5 && Math.abs(b0.y - b1.y) < 0.5 && Math.abs(a0.y - b0.y) < 0.5;
-          if (!v && !h) continue;
-          const p = v ? 'y' : 'x';
-          const lo = Math.max(Math.min(a0[p], a1[p]), Math.min(b0[p], b1[p]));
-          const hi = Math.min(Math.max(a0[p], a1[p]), Math.max(b0[p], b1[p]));
-          if (hi - lo <= 1) continue;
-          const trunk = dots.some((d) => (v ? Math.abs(d.x - a0.x) < 1 && d.y >= lo - 1 && d.y <= hi + 1 : Math.abs(d.y - a0.y) < 1 && d.x >= lo - 1 && d.x <= hi + 1));
-          if (!trunk) found.push(`${lines[i]!.id}/${lines[j]!.id}`);
-        }
-  return found;
-}
-
-/**
- * Pairs of different lines running side by side closer than 6 px (not on one track) over a
- * stretch, where at least one of the two runs is an inner one (the renderer can move those; the
- * first and last runs end on a symbol). Hops split a run; collinear pieces count as one run.
- */
-function nearLines(svg: string): string[] {
-  const runs = [...svg.matchAll(/<g class="stream [^"]*" data-id="edge-(s\d+)"[^>]*>\s*<path d="([^"]+)"/g)].map((m) => {
-    const pts = [...m[2]!.matchAll(/[ML]\s*(-?[\d.]+)[ ,](-?[\d.]+)/g)].map((p) => ({ x: +p[1]!, y: +p[2]! }));
-    const out: { a: Point2; b: Point2; v: boolean }[] = [];
-    for (let k = 0; k + 1 < pts.length; k++) {
-      const [a, b] = [pts[k]!, pts[k + 1]!];
-      const v = Math.abs(a.x - b.x) < 0.5;
-      const last = out[out.length - 1];
-      if (last && last.v === v && (v ? Math.abs(last.a.x - a.x) < 0.5 : Math.abs(last.a.y - a.y) < 0.5)) last.b = b;
-      else out.push({ a, b, v });
-    }
-    return { id: m[1]!, runs: out };
-  });
-  const found: string[] = [];
-  for (let i = 0; i < runs.length; i++)
-    for (let j = i + 1; j < runs.length; j++)
-      runs[i]!.runs.forEach((r, a) =>
-        runs[j]!.runs.forEach((q, b) => {
-          const inner = (a > 0 && a < runs[i]!.runs.length - 1) || (b > 0 && b < runs[j]!.runs.length - 1);
-          if (!inner || r.v !== q.v) return;
-          const d = r.v ? Math.abs(r.a.x - q.a.x) : Math.abs(r.a.y - q.a.y);
-          if (d < 0.5 || d >= 6) return;
-          const p = r.v ? 'y' : 'x';
-          const lo = Math.max(Math.min(r.a[p], r.b[p]), Math.min(q.a[p], q.b[p]));
-          const hi = Math.min(Math.max(r.a[p], r.b[p]), Math.max(q.a[p], q.b[p]));
-          if (hi - lo > 1) found.push(`${runs[i]!.id}/${runs[j]!.id}: ${d.toFixed(1)} px`);
-        }),
-      );
-  return found;
-}
-type Point2 = { x: number; y: number };
-
-/** Small steps in lines: a short (< 15 px) turn between two parallel runs. There should be none. */
-function bumps(svg: string): string[] {
-  const found: string[] = [];
-  for (const m of svg.matchAll(/<g class="stream [^"]*" data-id="edge-(s\d+)"[^>]*>\s*<path d="([^"]+)"/g)) {
-    const p = [...m[2]!.matchAll(/[ML]\s*(-?[\d.]+)[ ,](-?[\d.]+)/g)].map((q) => ({ x: +q[1]!, y: +q[2]! }));
-    for (let k = 1; k + 2 < p.length; k++) {
-      const [a, b, c, d] = [p[k - 1]!, p[k]!, p[k + 1]!, p[k + 2]!];
-      const len = Math.hypot(c.x - b.x, c.y - b.y);
-      const flat = (u: typeof a, w: typeof a) => Math.abs(u.y - w.y) < 0.5;
-      const upright = (u: typeof a, w: typeof a) => Math.abs(u.x - w.x) < 0.5;
-      const bump =
-        (flat(a, b) && flat(c, d) && upright(b, c) && Math.abs(a.y - d.y) > 0.5) ||
-        (upright(a, b) && upright(c, d) && flat(b, c) && Math.abs(a.x - d.x) > 0.5);
-      if (len > 0.5 && len < 15 && bump) found.push(`${m[1]}:${Math.round(len)}px`);
-    }
-  }
-  return found;
-}
-
-/** Line ends at a tee's layout position where that tee's dot is elsewhere: there should be none. */
-function staleTeeEnds(svg: string): string[] {
-  const tees = [...svg.matchAll(/class="equipment tee[^"]*" data-id="node-([^"]+)"[^>]*>\s*<g transform="translate\(([\d.]+),([\d.]+)\)"/g)].map(
-    (m) => ({ id: m[1]!, x: +m[2]! + 4, y: +m[3]! + 4 }),
-  );
-  const dots = [...svg.matchAll(/class="tee-dot" cx="([\d.]+)" cy="([\d.]+)"/g)].map((m) => ({ x: +m[1]!, y: +m[2]! }));
-  const ends = [...svg.matchAll(/<g class="stream [^"]*" data-id="edge-(s\d+)"[^>]*>\s*<path d="([^"]+)"/g)].flatMap((m) => {
-    const p = [...m[2]!.matchAll(/[ML]\s*(-?[\d.]+)[ ,](-?[\d.]+)/g)].map((q) => ({ x: +q[1]!, y: +q[2]! }));
-    return [{ id: m[1]!, ...p[0]! }, { id: m[1]!, ...p[p.length - 1]! }];
-  });
-  const near = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1;
-  return tees.filter((t) => !dots.some((d) => near(d, t))).flatMap((t) => ends.filter((e) => near(e, t)).map((e) => `${e.id}@${t.id}`));
-}
-
-/** Every tee dot in `svg` sits where three or more line arms meet. */
-function dotsOnJunctions(svg: string): { dots: number; off: string[] } {
-  const dots = [...svg.matchAll(/class="tee-dot" cx="([\d.]+)" cy="([\d.]+)"/g)].map((m) => ({ x: +m[1]!, y: +m[2]! }));
-  const paths = [...svg.matchAll(/<g class="stream [^"]*"[^>]*>\s*<path d="([^"]+)"/g)].map((m) =>
-    [...m[1]!.matchAll(/[ML]\s*(-?[\d.]+)[ ,](-?[\d.]+)/g)].map((p) => ({ x: +p[1]!, y: +p[2]! })),
-  );
-  const found = junctions(paths);
-  const off = dots.filter((d) => !found.some((j) => Math.abs(j.x - d.x) < 1 && Math.abs(j.y - d.y) < 1)).map((d) => `${d.x},${d.y}`);
-  return { dots: dots.length, off };
-}
-
 describe('actuators', () => {
   it('puts motors and diaphragms on 2- and 3-way valves, and signals on 3-way valves', () => {
     const { model, diagnostics } = parsePid(read('valve-types.mmd'));
@@ -859,6 +757,7 @@ describe('Mermaid v13 integration', () => {
     mermaid.registerIconPacks([{ name: 'mdi', loader: () => import('@iconify-json/mdi/icons.json').then((m) => m.default) }]);
     const out = new URL('../../../out/', import.meta.url);
     mkdirSync(out, { recursive: true });
+    const scores: Record<string, ReturnType<typeof clutter>> = {};
     for (const file of readdirSync(examplesDir).filter((f) => f.endsWith('.mmd') && !f.startsWith('.'))) {
       const { svg } = await mermaid.render(file.replace(/\W/g, '-'), read(file));
       writeFileSync(new URL(file.replace(/\.mmd$/, '.svg'), out), svg);
@@ -873,6 +772,8 @@ describe('Mermaid v13 integration', () => {
       expect(overlappingLines(svg), file).toEqual([]);
       expect(nearLines(svg), file).toEqual([]);
       expect(bumps(svg), file).toEqual([]);
+      expect(slantedLines(svg), file).toEqual([]);
+      scores[file] = clutter(svg);
       if (read(file).includes(': tee')) {
         // Tee dots mark where the lines actually join, never a straight run.
         const { dots, off } = dotsOnJunctions(svg);
@@ -957,5 +858,7 @@ describe('Mermaid v13 integration', () => {
         expect(svg.match(/stream process stream-blocked/g)).toHaveLength(3); // V-102.C→, →V-103, V-103→
       }
     }
+    // Step 2 of PLAN.md shows its effect as a diff of this snapshot.
+    expect(scores).toMatchSnapshot();
   });
 });

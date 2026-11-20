@@ -5,3 +5,4 @@ export { imageUrl, junctions, renderPid } from './render.js';
 export { SYMBOLS } from './symbols.js';
 export { boreProblem, connectedPorts, parseState, portOpen, stateText } from './state.js';
 export * from './model.js';
+export { clutter, labelHits, type Clutter } from './score.js';
