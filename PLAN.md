@@ -94,7 +94,7 @@ TOTAL                     33       312     73997        10  14126769         0  
 ```
 
 
-## Step 2: try several layouts, keep the best (suggested model: Claude Opus 5.5, medium effort)
+## Step 2: try several layouts, keep the best (suggested model: Claude Opus 5.5, medium effort) — DONE, home installation not improved
 
 Goal: replace the one-at-a-time choices with a small search scored by `clutter`.
 
@@ -114,6 +114,73 @@ Lessons from earlier work, to avoid repeating them:
 
 Done when: no benchmark diagram scores worse, the home installation and at least two examples
 score better, every must-be-0 count stays 0, and a final look at the PNGs agrees.
+
+### Step 2 result
+
+- `src/layout.ts`: `planLayout(model, ctx)` measures once and lays out once to make today's guesses
+  (`guess`), lists the choices that may go the other way (`free`), and `layout(choices)` lays out
+  with any `LayoutChoices`: `mirrored`, `coilSides`, `coilInletLow`, `reversed` (lines of a loop
+  laid out turned round, as coil-end lines already were, so the engine takes another line as
+  going back; the engine itself has no hint for that) and `slotSwaps`. `guessWith(reversed)`
+  makes the mirror and coil guesses again from a layout with those lines turned. `layoutPid` is
+  still the one-shot layout (today's guess).
+- `src/render.ts`: `planSlots` applies `PidLayout.slotSwaps` (`TAG:h|v:±1#n` swaps the n-th line
+  on a shared side with the next) after its own order; `sharedSides` lists the sides.
+- `src/search.ts`: `searchLayout` (the plugin's `layout`) hill-climbs from the guess: swaps of
+  neighbouring lines first (only a redraw), then mirrors, coil walls (one end, or the whole coil),
+  inlet nozzle, reversed loop lines (with and without guessing again). Each candidate is drawn
+  with `renderPid` and scored with `cost` = clutter total + 1000 per must-be-0 count, including
+  `symbolHits` (a line through or right along a symbol other than at its own end; it needs the
+  layout, so it is not in `clutter`). First improvement wins; fixed order; at most `MAX_RUNS` = 40
+  runs. Candidates are drawn without warnings.
+- Why `symbolHits`: the first coils result had 2 hops but ran a line up T-1's wall and over its
+  roof; the PNG disagreed with the total. No guess has one, so it counts as must-be-0.
+- Time (whole render, `node packages/diagram-pid/scripts/render.mjs`): about 11 ms per run on
+  all-capabilities, so ~450 ms for 40 runs; home installation ~85 ms; small examples under 15 ms.
+- Tests: `layout search` checks that no example costs more than with `layoutPid`, at least three
+  cost less, coils loses hops, and the same text gives the same SVG. Checked once that the
+  first fails without the search.
+- Scripts in `packages/diagram-pid/scripts/` (run `pnpm build` first): `render.mjs OUT file.mmd…`
+  renders with timings; `candidates.mjs file.mmd` scores every single change from the guess;
+  `combos.mjs file.mmd` scores every mirror/coil combination with each single reversed line.
+
+After (`node scripts/score.mjs`, committed examples):
+
+```
+diagram                 hops     bends    length labelHits      area  overlaps      near     bumps   slanted     total
+all-capabilities          10        84     24455         4   5784408         0         0         0         0    448.55
+coil-ends                  4        10      1535         0    326843         0         0         0         0     65.35
+coils                      3        12      2074         0    307440         0         0         0         0     62.74
+custom-styling             0        10      1243         0    364519         0         0         0         0     22.43
+distillation               0         4       805         0    253260         0         0         0         0     12.05
+gradients-no-marks         0         0        78         0     51788         0         0         0         0      0.78
+gradients                  0         0       932         0    463826         0         0         0         0      9.32
+home-heating               0        33      8773         0   1181938         0         0         0         0    120.73
+home-installation          3        27      8410         0   1181475         0         0         0         0     141.1
+instruments                0        19      2409         0    441792         0         0         0         0     43.09
+junctions                  0         9      2780         0    675324         0         0         0         0      36.8
+solar                      0        12      2156         0    593446         0         0         0         0     33.56
+three-way-valves           0        25      3075         0    753172         0         0         0         0     55.75
+valve-types                5        55     13336         3   1166976         0         0         0         0    253.36
+valves-tb                  0         7      1150         1    259076         0         0         0         0      23.5
+valves                     0         7      1167         1    258680         0         0         0         0     23.67
+TOTAL                     25       314     74378         9  14063963         0         0         0         0   1352.78
+```
+
+Coils 85.91 → 62.74, junctions 66.73 → 36.8, home-heating 126.82 → 120.73, valve-types 263.36 →
+253.36, all-capabilities 458.55 → 448.55; nothing worse. PNGs of coils, junctions and home-heating
+looked at: agree.
+
+Not done: the **home installation stays at 141.1**. `combos.mjs` tries all 1184 combinations of
+its choices and none beats the guess, so the search cannot reach it. Its 3 hops are routing, not choices:
+- hw1 / hw2 at CV's left wall: n4 (upper) and n3 (lower) both lead upwards, so they must cross
+  unless one goes round CV; the nozzle order is the diagram's.
+- cw1 / i1 at T-1's left wall: either slot order crosses, since the instrument sits below and
+  left and its rise meets cold water's run from F-1 (a route column, not an order).
+- r7 (C-3 → V-1.B) / r5: r5 takes C-3's top and r4 its left, so r7 leaves by the right and
+  crosses r5. Joining r7 onto r5's vertical with a tee dot (in `bendAtTee` / `joinAtDots`) would
+  remove it.
+These would be a step 3 in `render.ts`.
 
 ## Sessions
 

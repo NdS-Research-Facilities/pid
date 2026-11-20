@@ -115,6 +115,8 @@ export interface PidLayout extends LayoutModel {
   coilSides: Map<string, 'left' | 'right'>;
   /** Coils (`TAG#index`) with both nozzles on one wall whose inlet is the lower one. */
   coilInletLow: Set<string>;
+  /** Neighbouring lines on a shared side swapped after `planSlots` orders them: `TAG:h|v:±1#n`. */
+  slotSwaps?: ReadonlySet<string>;
   fontSize: number;
 }
 
@@ -325,8 +327,65 @@ function fontSizeOf(ctx: RenderContext): number {
   return 13;
 }
 
+/**
+ * The choices made about a diagram before its final layout: each can be made another way, and
+ * `search.ts` tries some of them on the real render.
+ */
+export interface LayoutChoices {
+  /** 3-way and relief valves flipped across the flow (`NodePlacement.mirror`). */
+  mirrored: ReadonlySet<string>;
+  /** The wall each coil nozzle is on, by `coilKey`. */
+  coilSides: ReadonlyMap<string, 'left' | 'right'>;
+  /** Coils (`TAG#index`) with both nozzles on one wall whose inlet is the lower one. */
+  coilInletLow: ReadonlySet<string>;
+  /**
+   * Lines of a loop laid out turned around (their route turned back afterwards), so the layout
+   * takes another line of the loop as the one going back.
+   */
+  reversed: ReadonlySet<string>;
+  /** Neighbouring lines swapped on a side they share (`PidLayout.slotSwaps`). */
+  slotSwaps: ReadonlySet<string>;
+}
+
+/** A choice that may be made the other way: its key in `LayoutChoices`. */
+export type Choice =
+  | { kind: 'mirror'; id: string }
+  /** A coil end the diagram does not pin to a wall, and that has a line. */
+  | { kind: 'coilSide'; key: string }
+  | { kind: 'inletLow'; key: string }
+  /** A line in a loop. */
+  | { kind: 'reverse'; id: string }
+  /** Two neighbouring lines on a side they share, `TAG:h|v:±1#n` (found on a drawing, not in `free`). */
+  | { kind: 'swap'; key: string };
+
+/** A diagram measured once, laid out as often as needed with different choices. */
+export interface LayoutPlan {
+  /** Today's guess at each choice, each made by looking at a first layout. */
+  guess: LayoutChoices;
+  /** The choices that may be made the other way, in a fixed order. */
+  free: Choice[];
+  /** Coil keys (`TAG#index`) by coil nozzle key, to pair a coil's two ends. */
+  coilOf: ReadonlyMap<string, string>;
+  /**
+   * Today's guess made again from a first layout with `reversed` turned round: the valves and
+   * coils facing where their lines now go.
+   */
+  guessWith(reversed: ReadonlySet<string>): LayoutChoices;
+  /** The layout with `choices`. With `guess`, the first layout is reused when nothing changes it. */
+  layout(choices: LayoutChoices): PidLayout;
+}
+
 /** Measures every label, then hands boxes and streams to the configured graph layout engine. */
 export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
+  const plan = planLayout(model, ctx);
+  return plan.layout(plan.guess);
+}
+
+/**
+ * Measures every label and lays the diagram out once, to make today's guess at each choice; the
+ * plan's `layout` then lays it out with any choices.
+ */
+export function planLayout(model: PidModel, ctx: RenderContext): LayoutPlan {
   const size = fontSizeOf(ctx);
   const family = ctx.theme.value('fontFamily');
   const font: FontKey = { family, size, weight: 400 };
@@ -459,8 +518,10 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
   // out turned around, so what hangs on the inlet comes before the vessel and what hangs on the
   // outlet after it, as for the process lines. Its route is turned back afterwards.
   const flipped = new Set(model.streams.filter((s) => s.sourceCoilEnd === 'in' || s.targetCoilEnd === 'out').map((s) => s.id));
-  const forLayout = (e: LayoutEdge): LayoutEdge => {
-    if (!flipped.has(e.id)) return e;
+  // A line chosen to be reversed is turned around too, or back again if it already is.
+  const turned = (id: string, reversed: ReadonlySet<string>) => flipped.has(id) !== reversed.has(id);
+  const forLayout = (e: LayoutEdge, reversed: ReadonlySet<string>): LayoutEdge => {
+    if (!turned(e.id, reversed)) return e;
     const { endMarker, startMarker, sides, ...rest } = e;
     return {
       ...rest,
@@ -471,103 +532,113 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
       ...(sides ? { sides: { source: sides.target, target: sides.source } } : {}),
     };
   };
-  const run = () => {
+  const run = (laidEdges: LayoutEdge[], reversed: ReadonlySet<string> = new Set()) => {
     const out = ctx.layout({
       direction: model.direction,
       nodes,
-      edges: edges.map(forLayout),
+      edges: laidEdges.map((e) => forLayout(e, reversed)),
       groups: [],
       spacing: { node: 50, rank: 70, edge: 20 },
       routing: 'stepped',
       diagramPadding: 12,
     });
-    for (const id of flipped) {
+    for (const id of new Set([...flipped, ...reversed])) {
+      if (!turned(id, reversed)) continue;
       const e = out.edges.get(id);
       if (e?.points) out.edges.set(id, { ...e, points: [...e.points].reverse() });
     }
     return out;
   };
-  let laid = run();
+  const first = run(edges);
 
-  // The layout orders nodes without regard to which side a branch must leave by, so a branch
-  // line can have to cross the valve's other lines. Mirror each valve whose branch heads the
-  // other way, and lay out again with the new sides. Boxes are symmetric: sizes do not change.
-  const mirrored = new Set<string>();
-  const across = (p: { x: number; y: number }) => (vertical(model.direction) ? p.x : p.y);
-  for (const eq of model.equipment.filter(hasBranch)) {
-    const node = laid.nodes.get(eq.id);
-    // Where each branch line meets its other end: the side of the valve it has to get to.
-    const ends = branchLines(model, eq).flatMap(({ id, fromValve }) => {
-      const pts = laid.edges.get(id)?.points;
-      return pts?.length ? [fromValve ? pts[pts.length - 1]! : pts[0]!] : [];
-    });
-    if (!node || !ends.length) continue;
-    const pull = ends.reduce((sum, n) => sum + across(n) - across(node), 0) / ends.length;
-    const side = portSide(model.direction, 'C');
-    const sign = side === 'bottom' || side === 'right' ? 1 : -1;
-    if (pull * sign < 0) mirrored.add(eq.id);
-  }
-  // Each coil nozzle goes on the wall facing the line it carries (inlet: the line coming in,
-  // outlet: the line going out), unless the diagram names the walls. With both on one wall, the
-  // inlet takes the upper or lower nozzle, whichever its line comes from, so the two don't cross.
-  const coilSides = new Map<string, 'left' | 'right'>();
-  const coilInletLow = new Set<string>();
-  for (const eq of model.equipment) {
-    const node = laid.nodes.get(eq.id);
-    eq.coils?.forEach((coil, i) => {
-      // The lines at one end of the coil, each with the end of it away from the coil. Process lines
-      // and cables decide; an instrument or signal line only when the end has nothing else.
-      const linesAt = (end: CoilEnd) => {
-        const all = model.streams.flatMap((s) => {
-          if (s.source === eq.id && s.sourceCoil === i && coilEnd(s, true) === end) return [{ s, far: s.target, atSource: true }];
-          if (s.target === eq.id && s.targetCoil === i && coilEnd(s, false) === end) return [{ s, far: s.source, atSource: false }];
-          return [];
-        });
-        const main = all.filter((l) => l.s.kind === 'process' || l.s.kind === 'electric');
-        return main.length ? main : all;
-      };
-      const otherY = (end: CoilEnd) => {
-        const ys = linesAt(end).map((l) => laid.nodes.get(l.far)?.y ?? NaN).filter((y) => !Number.isNaN(y));
-        return ys.length ? ys.reduce((a, b) => a + b, 0) / ys.length : undefined;
-      };
-      const sideOf = (end: CoilEnd) => {
-        const ends = linesAt(end).flatMap((l) => {
-          const pts = laid.edges.get(l.s.id)?.points;
-          if (!pts?.length) return [];
-          return [l.atSource ? pts[pts.length - 1]! : pts[0]!];
-        });
-        if (!node || !ends.length) return undefined;
-        return ends.reduce((sum, p) => sum + p.x - node.x, 0) / ends.length > 0 ? ('right' as const) : ('left' as const);
-      };
-      // Named walls win; a nozzle without a line goes on the other one's wall.
-      const autoIn = sideOf('in');
-      const autoOut = sideOf('out');
-      const inlet = coil.side ?? autoIn ?? autoOut ?? 'left';
-      const outlet = coil.sideOut ?? coil.side ?? autoOut ?? inlet;
-      coilSides.set(coilKey(eq.id, i, 'in'), inlet);
-      coilSides.set(coilKey(eq.id, i, 'out'), outlet);
-      if (inlet === outlet && node) {
-        const yIn = otherY('in');
-        const yOut = otherY('out');
-        const low = yIn !== undefined && yOut !== undefined ? yIn > yOut : yIn !== undefined ? yIn > node.y : yOut !== undefined && yOut < node.y;
-        if (low) coilInletLow.add(`${eq.id}#${i}`);
-      }
-    });
-  }
-  const coilLines = model.streams.some((s) => s.sourceCoil !== undefined || s.targetCoil !== undefined);
-  if (mirrored.size || coilLines) {
-    for (const id of mirrored) {
-      const place = placements.get(id)!;
-      place.mirror = true;
-      place.side = labelSide(model.direction, byId.get(id)!, true);
+  /** Today's guess at each choice from a first layout `first`, and which choices are free. */
+  const guessFrom = (first: LayoutModel, reversed: ReadonlySet<string>) => {
+    // The layout orders nodes without regard to which side a branch must leave by, so a branch
+    // line can have to cross the valve's other lines. Mirror each valve whose branch heads the
+    // other way, and lay out again with the new sides. Boxes are symmetric: sizes do not change.
+    const mirrored = new Set<string>();
+    const free: Choice[] = [];
+    const across = (p: { x: number; y: number }) => (vertical(model.direction) ? p.x : p.y);
+    for (const eq of model.equipment.filter(hasBranch)) {
+      const node = first.nodes.get(eq.id);
+      // Where each branch line meets its other end: the side of the valve it has to get to.
+      const ends = branchLines(model, eq).flatMap(({ id, fromValve }) => {
+        const pts = first.edges.get(id)?.points;
+        return pts?.length ? [fromValve ? pts[pts.length - 1]! : pts[0]!] : [];
+      });
+      if (!node || !ends.length) continue;
+      free.push({ kind: 'mirror', id: eq.id });
+      const pull = ends.reduce((sum, n) => sum + across(n) - across(node), 0) / ends.length;
+      const side = portSide(model.direction, 'C');
+      const sign = side === 'bottom' || side === 'right' ? 1 : -1;
+      if (pull * sign < 0) mirrored.add(eq.id);
     }
-    model.streams.forEach((s, k) => {
-      const sides = endSides(model.direction, s, byId, mirrored, coilSides);
-      edges[k]!.sides = sides.source || sides.target ? sides : undefined;
-    });
-    laid = run();
-  }
-  alignTees(model, laid, placements, byId, coilSides, coilInletLow);
+    // Each coil nozzle goes on the wall facing the line it carries (inlet: the line coming in,
+    // outlet: the line going out), unless the diagram names the walls. With both on one wall, the
+    // inlet takes the upper or lower nozzle, whichever its line comes from, so the two don't cross.
+    const coilSides = new Map<string, 'left' | 'right'>();
+    const coilInletLow = new Set<string>();
+    const coilOf = new Map<string, string>();
+    for (const eq of model.equipment) {
+      const node = first.nodes.get(eq.id);
+      eq.coils?.forEach((coil, i) => {
+        // The lines at one end of the coil, each with the end of it away from the coil. Process lines
+        // and cables decide; an instrument or signal line only when the end has nothing else.
+        const linesAt = (end: CoilEnd) => {
+          const all = model.streams.flatMap((s) => {
+            if (s.source === eq.id && s.sourceCoil === i && coilEnd(s, true) === end) return [{ s, far: s.target, atSource: true }];
+            if (s.target === eq.id && s.targetCoil === i && coilEnd(s, false) === end) return [{ s, far: s.source, atSource: false }];
+            return [];
+          });
+          const main = all.filter((l) => l.s.kind === 'process' || l.s.kind === 'electric');
+          return main.length ? main : all;
+        };
+        const otherY = (end: CoilEnd) => {
+          const ys = linesAt(end).map((l) => first.nodes.get(l.far)?.y ?? NaN).filter((y) => !Number.isNaN(y));
+          return ys.length ? ys.reduce((a, b) => a + b, 0) / ys.length : undefined;
+        };
+        const sideOf = (end: CoilEnd) => {
+          const ends = linesAt(end).flatMap((l) => {
+            const pts = first.edges.get(l.s.id)?.points;
+            if (!pts?.length) return [];
+            return [l.atSource ? pts[pts.length - 1]! : pts[0]!];
+          });
+          if (!node || !ends.length) return undefined;
+          return ends.reduce((sum, p) => sum + p.x - node.x, 0) / ends.length > 0 ? ('right' as const) : ('left' as const);
+        };
+        // Named walls win; a nozzle without a line goes on the other one's wall.
+        const autoIn = sideOf('in');
+        const autoOut = sideOf('out');
+        const inlet = coil.side ?? autoIn ?? autoOut ?? 'left';
+        const outlet = coil.sideOut ?? coil.side ?? autoOut ?? inlet;
+        const keyIn = coilKey(eq.id, i, 'in');
+        const keyOut = coilKey(eq.id, i, 'out');
+        coilSides.set(keyIn, inlet);
+        coilSides.set(keyOut, outlet);
+        coilOf.set(keyIn, `${eq.id}#${i}`);
+        coilOf.set(keyOut, `${eq.id}#${i}`);
+        if (coil.side === undefined && autoIn) free.push({ kind: 'coilSide', key: keyIn });
+        if (coil.sideOut === undefined && coil.side === undefined && autoOut) free.push({ kind: 'coilSide', key: keyOut });
+        if (autoIn || autoOut) free.push({ kind: 'inletLow', key: `${eq.id}#${i}` });
+        if (inlet === outlet && node) {
+          const yIn = otherY('in');
+          const yOut = otherY('out');
+          const low = yIn !== undefined && yOut !== undefined ? yIn > yOut : yIn !== undefined ? yIn > node.y : yOut !== undefined && yOut < node.y;
+          if (low) coilInletLow.add(`${eq.id}#${i}`);
+        }
+      });
+    }
+    const choices: LayoutChoices = { mirrored, coilSides, coilInletLow, reversed, slotSwaps: new Set() };
+    return { choices, free, coilOf };
+  };
+  const { choices: guess, free, coilOf } = guessFrom(first, new Set());
+  // Lines in a loop (both ends in one strongly connected part of the diagram): turning one round
+  // changes which line the layout takes as going back. Tried after the other choices.
+  for (const id of loopLines(model)) free.push({ kind: 'reverse', id });
+  /** The guess made again from a first layout with `reversed` turned round. */
+  const guessWith = (reversed: ReadonlySet<string>): LayoutChoices => (reversed.size ? guessFrom(run(edges, reversed), reversed).choices : guess);
+  const coilLines = model.streams.some((s) => s.sourceCoil !== undefined || s.targetCoil !== undefined);
+
   const markSize = Math.max(8, size - 4);
   const markFont: FontKey = { family, size: markSize, weight: 400 };
   const fillMarks: PidLayout['fillMarks'] = new Map();
@@ -579,5 +650,74 @@ export function layoutPid(model: PidModel, ctx: RenderContext): PidLayout {
         level: eq.level ? measure(eq.level.percent === undefined ? '?' : `${round1(eq.level.percent)} %`, markFont) : undefined,
       });
     }
-  return { ...laid, placements, edgeLabels, lineNumbers, fillMarks, markSize, coilSides, coilInletLow, fontSize: size };
+
+  let firstUsed = false;
+  const layout = (choices: LayoutChoices): PidLayout => {
+    // Placements change with mirroring, the layout with every choice: each run gets its own.
+    const places = new Map([...placements].map(([id, p]) => [id, { ...p }]));
+    for (const id of choices.mirrored) {
+      const place = places.get(id)!;
+      place.mirror = true;
+      place.side = labelSide(model.direction, byId.get(id)!, true);
+    }
+    // Without a mirrored valve or a coil line the sides are those of the first layout, which
+    // `alignTees` has not touched yet the first time.
+    let laid: LayoutModel;
+    if (!choices.mirrored.size && !choices.reversed.size && !coilLines && !firstUsed) {
+      firstUsed = true;
+      laid = first;
+    } else {
+      laid = run(
+        model.streams.map((s, k) => {
+          const sides = endSides(model.direction, s, byId, choices.mirrored, choices.coilSides);
+          return { ...edges[k]!, sides: sides.source || sides.target ? sides : undefined };
+        }),
+        choices.reversed,
+      );
+    }
+    alignTees(model, laid, places, byId, choices.coilSides, choices.coilInletLow);
+    return {
+      ...laid,
+      placements: places,
+      edgeLabels,
+      lineNumbers,
+      fillMarks,
+      markSize,
+      coilSides: new Map(choices.coilSides),
+      coilInletLow: new Set(choices.coilInletLow),
+      ...(choices.slotSwaps.size ? { slotSwaps: new Set(choices.slotSwaps) } : {}),
+      fontSize: size,
+    };
+  };
+  return { guess, guessWith, free, coilOf, layout };
+}
+
+/** The lines whose two ends lie on one loop (Tarjan's strongly connected components), in order. */
+function loopLines(model: PidModel): string[] {
+  const next = new Map<string, string[]>();
+  for (const s of model.streams) next.set(s.source, [...(next.get(s.source) ?? []), s.target]);
+  const index = new Map<string, number>();
+  const low = new Map<string, number>();
+  const part = new Map<string, number>();
+  const stack: string[] = [];
+  let count = 0;
+  const visit = (v: string) => {
+    index.set(v, count);
+    low.set(v, count++);
+    stack.push(v);
+    for (const w of next.get(v) ?? []) {
+      if (!index.has(w)) {
+        visit(w);
+        low.set(v, Math.min(low.get(v)!, low.get(w)!));
+      } else if (!part.has(w)) low.set(v, Math.min(low.get(v)!, index.get(w)!));
+    }
+    if (low.get(v) === index.get(v)) {
+      for (let w = stack.pop(); ; w = stack.pop()) {
+        part.set(w!, index.get(v)!);
+        if (w === v) break;
+      }
+    }
+  };
+  for (const eq of model.equipment) if (!index.has(eq.id)) visit(eq.id);
+  return model.streams.filter((s) => s.source !== s.target && part.get(s.source) !== undefined && part.get(s.source) === part.get(s.target)).map((s) => s.id);
 }

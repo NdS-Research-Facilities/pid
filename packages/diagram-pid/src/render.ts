@@ -947,8 +947,49 @@ function planSlots(
   byId: ReadonlyMap<string, Equipment>,
   mirrored: ReadonlySet<string>,
 ): Map<string, number> {
-  /** `turn`: which way the line turns once out (-1, 0 not at all, 1); `out`: how far out it turns. */
-  type End = { key: string; stream: string; pull: number; turn: number; out: number; route: Point[] };
+  const groups = sideGroups(model, layout, byId, mirrored);
+  const out = new Map<string, number>();
+  for (const [id, { eq, across, ends }] of groups) {
+    if (ends.length < 2) continue;
+    const node = layout.nodes.get(eq.id)!;
+    const place = layout.placements.get(eq.id)!;
+    const limit = sideLimit(eq, place, across);
+    const centre = across ? node.y : node.x;
+    const gap = Math.min(LINE_GAP, (2 * limit) / (ends.length - 1));
+    // Of two lines, the one turning nearer the symbol decides: it goes on the side it turns to,
+    // so the other passes it rather than crossing it.
+    ends.sort((a, b) => {
+      if (Math.abs(a.out - b.out) > 0.5) {
+        const near = a.out < b.out ? a : b;
+        if (near.turn) return near === a ? near.turn : -near.turn;
+      }
+      return a.pull - b.pull;
+    });
+    const at = (n: number) => centre + (n - (ends.length - 1) / 2) * gap;
+    // That order is a good guess; with few lines, every order is tried and the one with the
+    // fewest crossings (hops) kept, the guess winning ties.
+    const best = ends.length <= MAX_TRIED ? fewestCrossings(ends, across, at, layout, model) : [...ends];
+    // The layout search may swap neighbours, checked on the drawing rather than estimated.
+    for (let n = 0; n + 1 < best.length; n++) if (layout.slotSwaps?.has(`${id}#${n}`)) [best[n], best[n + 1]] = [best[n + 1]!, best[n]!];
+    best.forEach((e, n) => out.set(e.key, at(n)));
+  }
+  return out;
+}
+
+/** `turn`: which way the line turns once out (-1, 0 not at all, 1); `out`: how far out it turns. */
+type SideEnd = { key: string; stream: string; pull: number; turn: number; out: number; route: Point[] };
+
+/**
+ * The sides of symbols that `planSlots` shares out, by `TAG:h|v:±1`, each with its lines' ends
+ * there, in the order the streams are written.
+ */
+function sideGroups(
+  model: PidModel,
+  layout: PidLayout,
+  byId: ReadonlyMap<string, Equipment>,
+  mirrored: ReadonlySet<string>,
+): Map<string, { eq: Equipment; across: boolean; ends: SideEnd[] }> {
+  type End = SideEnd;
   const groups = new Map<string, { eq: Equipment; across: boolean; ends: End[] }>();
   for (const s of model.streams) {
     const pts = layout.edges.get(s.id)?.points;
@@ -982,30 +1023,17 @@ function planSlots(
       groups.set(id, group);
     }
   }
-  const out = new Map<string, number>();
-  for (const { eq, across, ends } of groups.values()) {
-    if (ends.length < 2) continue;
-    const node = layout.nodes.get(eq.id)!;
-    const place = layout.placements.get(eq.id)!;
-    const limit = sideLimit(eq, place, across);
-    const centre = across ? node.y : node.x;
-    const gap = Math.min(LINE_GAP, (2 * limit) / (ends.length - 1));
-    // Of two lines, the one turning nearer the symbol decides: it goes on the side it turns to,
-    // so the other passes it rather than crossing it.
-    ends.sort((a, b) => {
-      if (Math.abs(a.out - b.out) > 0.5) {
-        const near = a.out < b.out ? a : b;
-        if (near.turn) return near === a ? near.turn : -near.turn;
-      }
-      return a.pull - b.pull;
-    });
-    const at = (n: number) => centre + (n - (ends.length - 1) / 2) * gap;
-    // That order is a good guess; with few lines, every order is tried and the one with the
-    // fewest crossings (hops) kept, the guess winning ties.
-    const best = ends.length <= MAX_TRIED ? fewestCrossings(ends, across, at, layout, model) : ends;
-    best.forEach((e, n) => out.set(e.key, at(n)));
-  }
-  return out;
+  return groups;
+}
+
+/**
+ * The sides where several lines share out a symbol's side (`planSlots`), with how many lines:
+ * neighbours there may be swapped by `PidLayout.slotSwaps` (`TAG:h|v:±1#n` swaps the n-th and next).
+ */
+export function sharedSides(model: PidModel, layout: PidLayout): { id: string; size: number }[] {
+  const byId = new Map(model.equipment.map((e) => [e.id, e]));
+  const mirrored = new Set([...layout.placements].flatMap(([id, p]) => (p.mirror ? [id] : [])));
+  return [...sideGroups(model, layout, byId, mirrored)].flatMap(([id, g]) => (g.ends.length >= 2 ? [{ id, size: g.ends.length }] : []));
 }
 
 /** Sides with up to this many lines try every order of them (6! = 720). */

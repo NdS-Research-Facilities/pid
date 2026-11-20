@@ -2,8 +2,9 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { icons } from '@mermaid-js/plugin-icons';
 import { createMermaid } from 'mermaid';
 import { describe, expect, it } from 'vitest';
-import { boreProblem, declarations, imageUrl, junctions, parsePid, parseState, pid } from '../src/index.js';
+import { boreProblem, declarations, imageUrl, junctions, layoutPid, parsePid, parseState, pid } from '../src/index.js';
 import { bumps, clutter, dotsOnJunctions, nearLines, overlappingLines, slantedLines, staleTeeEnds } from '../src/score.js';
+import { cost } from '../src/search.js';
 
 const examplesDir = new URL('../../../examples/', import.meta.url);
 const read = (name: string) => readFileSync(new URL(name, examplesDir), 'utf8');
@@ -860,5 +861,35 @@ describe('Mermaid v13 integration', () => {
     }
     // Step 2 of PLAN.md shows its effect as a diff of this snapshot.
     expect(scores).toMatchSnapshot();
+  });
+});
+
+describe('layout search', () => {
+  // The same plugin without the search: today's one-at-a-time choices.
+  const guessOnly = { ...pid, layout: layoutPid };
+  const renderAll = async (plugin: typeof pid) => {
+    const mermaid = createMermaid();
+    await mermaid.registerExternalDiagrams([plugin, icons]);
+    mermaid.registerIconPacks([{ name: 'mdi', loader: () => import('@iconify-json/mdi/icons.json').then((m) => m.default) }]);
+    const out: Record<string, string> = {};
+    for (const file of readdirSync(examplesDir).filter((f) => f.endsWith('.mmd') && !f.startsWith('.')))
+      out[file] = (await mermaid.render(file.replace(/\W/g, '-'), read(file))).svg;
+    return out;
+  };
+
+  it('never draws an example worse than the first guess, and some better', async () => {
+    const guessed = await renderAll(guessOnly);
+    const searched = await renderAll(pid);
+    const better = Object.keys(guessed).filter((f) => {
+      expect(cost(searched[f]!), f).toBeLessThanOrEqual(cost(guessed[f]!));
+      return cost(searched[f]!) < cost(guessed[f]!);
+    });
+    expect(better.length).toBeGreaterThanOrEqual(3);
+    // The coils example loses hops.
+    expect(clutter(searched['coils.mmd']!).hops).toBeLessThan(clutter(guessed['coils.mmd']!).hops);
+  });
+
+  it('draws the same text the same way every time', async () => {
+    expect(await renderAll(pid)).toEqual(await renderAll(pid));
   });
 });

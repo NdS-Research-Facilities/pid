@@ -1,8 +1,9 @@
 import type { DiagramPlugin } from '@mermaid-js/core';
-import { layoutPid, type PidLayout } from './layout.js';
+import type { PidLayout } from './layout.js';
 import type { PidModel } from './model.js';
 import { detectPid, parsePid } from './parser.js';
 import { renderPid } from './render.js';
+import { searchLayout } from './search.js';
 
 /** The P&ID diagram plugin for Mermaid v13: `mermaid.registerExternalDiagrams([pid])`. */
 export const pid: DiagramPlugin<PidModel, PidLayout> = {
@@ -20,6 +21,7 @@ export const pid: DiagramPlugin<PidModel, PidLayout> = {
   ],
   // Icon packs load only for diagrams that name them (`icon TT-1 mdi:thermometer`).
   icons: (model) => [...new Set(model.equipment.flatMap((e) => (e.icon ? [e.icon.name] : [])))],
-  layout: (model, ctx) => layoutPid(model, ctx),
+  // The layout whose choices (mirrored valves, coil walls) give the least cluttered drawing.
+  layout: (model, ctx) => searchLayout(model, ctx),
   render: (model, layout, ctx, w) => renderPid(model, layout, ctx, w),
 };

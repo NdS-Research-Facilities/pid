@@ -35,7 +35,7 @@ const STREAM = /<g class="stream [^"]*" data-id="edge-(s\d+)"[^>]*>\s*<path d="(
 const POINTS = /[ML]\s*(-?[\d.]+)[ ,](-?[\d.]+)/g;
 
 /** The first path of every stream (the line itself, not its arrowhead). */
-function streams(svg: string): { id: string; d: string; pts: Point2[] }[] {
+export function streams(svg: string): { id: string; d: string; pts: Point2[] }[] {
   return [...svg.matchAll(STREAM)].map((m) => ({
     id: m[1]!,
     d: m[2]!,
